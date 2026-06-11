@@ -1,0 +1,49 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ebc-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017
+      MONGO_DB_NAME: ${MONGO_DB_NAME:-e_business_card}
+      MONGO_CARDS_COLLECTION: ${MONGO_CARDS_COLLECTION:-captured_cards}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_TIMEOUT_SECONDS: ${OPENROUTER_TIMEOUT_SECONDS:-30}
+      OPENROUTER_MAX_RETRIES: ${OPENROUTER_MAX_RETRIES:-2}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - ebc-internal
+
+  mongodb:
+    image: mongo:7
+    container_name: ebc-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - ebc-internal
+
+networks:
+  ebc-internal:
+    driver: bridge
+
+volumes:
+  mongodb_data:

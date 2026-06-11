@@ -1,0 +1,90 @@
+openapi: 3.1.0
+info:
+  title: E-Business Card API
+  version: 1.0.0
+  description: Parses raw OCR text into hybrid-schema business card documents.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+paths:
+  /api/v1/cards/process:
+    post:
+      summary: Parse OCR text and persist a captured business card
+      operationId: processCard
+      tags:
+        - cards
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessCardRequest"
+      responses:
+        "201":
+          description: Card parsed and saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapturedCardResponse"
+        "502":
+          description: LLM parsing service unavailable
+        "504":
+          description: LLM parsing service timed out
+        "500":
+          description: Database persistence failed
+components:
+  schemas:
+    ProcessCardRequest:
+      type: object
+      required:
+        - owner_user_id
+        - raw_ocr_text
+      properties:
+        owner_user_id:
+          type: string
+          minLength: 1
+        raw_ocr_text:
+          type: string
+          minLength: 1
+    CoreFields:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        company_name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+    CapturedCardResponse:
+      type: object
+      required:
+        - _id
+        - owner_user_id
+        - scanned_at
+        - core_fields
+        - custom_fields
+      properties:
+        _id:
+          type: string
+        owner_user_id:
+          type: string
+        scanned_at:
+          type: string
+          format: date-time
+        core_fields:
+          $ref: "#/components/schemas/CoreFields"
+        custom_fields:
+          type: object
+          additionalProperties:
+            type: string

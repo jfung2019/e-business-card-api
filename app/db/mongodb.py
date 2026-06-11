@@ -1,0 +1,36 @@
+from collections.abc import AsyncGenerator
+
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
+
+from app.core.config import Settings, get_settings
+
+_client: AsyncIOMotorClient | None = None
+
+
+def get_motor_client(settings: Settings | None = None) -> AsyncIOMotorClient:
+    global _client
+    resolved = settings or get_settings()
+    if _client is None:
+        _client = AsyncIOMotorClient(resolved.mongo_uri)
+    return _client
+
+
+def get_database(settings: Settings | None = None) -> AsyncIOMotorDatabase:
+    resolved = settings or get_settings()
+    return get_motor_client(resolved)[resolved.mongo_db_name]
+
+
+def get_cards_collection(settings: Settings | None = None) -> AsyncIOMotorCollection:
+    resolved = settings or get_settings()
+    return get_database(resolved)[resolved.mongo_cards_collection]
+
+
+async def close_motor_client() -> None:
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None
+
+
+async def get_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
+    yield get_cards_collection()
