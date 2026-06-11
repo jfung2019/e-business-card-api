@@ -21,6 +21,25 @@ def get_card_service(
     return CardService(collection=collection)
 
 
+@router.get(
+    "",
+    response_model=list[CapturedCardResponse],
+    summary="List captured business cards for the authenticated user",
+)
+async def list_cards(
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> list[CapturedCardResponse]:
+    try:
+        return await card_service.list_for_user(owner_user_id)
+    except CardPersistenceError as exc:
+        logger.error("Database error while listing cards: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load captured cards.",
+        ) from exc
+
+
 @router.post(
     "/process",
     response_model=CapturedCardResponse,

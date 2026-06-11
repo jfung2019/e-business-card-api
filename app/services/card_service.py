@@ -41,10 +41,27 @@ class CardService:
             logger.exception("MongoDB insert failed for captured card")
             raise CardPersistenceError("Failed to persist captured card") from exc
 
+        return self._to_response({**validated_payload, "_id": insert_result.inserted_id})
+
+    async def list_for_user(self, owner_user_id: str) -> list[CapturedCardResponse]:
+        try:
+            cursor = self._collection.find({"owner_user_id": owner_user_id}).sort(
+                "scanned_at",
+                -1,
+            )
+            documents = await cursor.to_list(length=None)
+        except PyMongoError as exc:
+            logger.exception("MongoDB query failed for captured cards")
+            raise CardPersistenceError("Failed to load captured cards") from exc
+
+        return [self._to_response(document) for document in documents]
+
+    @staticmethod
+    def _to_response(document: dict) -> CapturedCardResponse:
         return CapturedCardResponse(
-            _id=str(insert_result.inserted_id),
-            owner_user_id=document.owner_user_id,
-            scanned_at=document.scanned_at,
-            core_fields=document.core_fields,
-            custom_fields=document.custom_fields,
+            _id=str(document["_id"]),
+            owner_user_id=document["owner_user_id"],
+            scanned_at=document["scanned_at"],
+            core_fields=document["core_fields"],
+            custom_fields=document.get("custom_fields", {}),
         )

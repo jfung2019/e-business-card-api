@@ -7,6 +7,29 @@ servers:
   - url: http://localhost:8000
     description: Local development
 paths:
+  /api/v1/cards:
+    get:
+      summary: List captured business cards for the authenticated user
+      operationId: listCards
+      tags:
+        - cards
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Cards owned by the authenticated user, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CapturedCardResponse"
+        "401":
+          description: Missing or invalid Firebase ID token
+        "503":
+          description: Authentication service not configured
+        "500":
+          description: Database query failed
   /api/v1/cards/process:
     post:
       summary: Parse OCR text and persist a captured business card
