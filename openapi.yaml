@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: E-Business Card API
-  version: 1.0.0
-  description: Parses raw OCR text into hybrid-schema business card documents.
+  version: 1.1.0
+  description: Parses raw OCR text into hybrid-schema business card documents. Protected endpoints require a Firebase ID token.
 servers:
   - url: http://localhost:8000
     description: Local development
@@ -13,6 +13,8 @@ paths:
       operationId: processCard
       tags:
         - cards
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -26,6 +28,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapturedCardResponse"
+        "401":
+          description: Missing or invalid Firebase ID token
+        "503":
+          description: Authentication service not configured
         "502":
           description: LLM parsing service unavailable
         "504":
@@ -33,16 +39,18 @@ paths:
         "500":
           description: Database persistence failed
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Firebase ID token from the mobile client
   schemas:
     ProcessCardRequest:
       type: object
       required:
-        - owner_user_id
         - raw_ocr_text
       properties:
-        owner_user_id:
-          type: string
-          minLength: 1
         raw_ocr_text:
           type: string
           minLength: 1
@@ -79,6 +87,7 @@ components:
           type: string
         owner_user_id:
           type: string
+          description: Firebase UID of the authenticated user
         scanned_at:
           type: string
           format: date-time

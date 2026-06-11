@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorCollection
 
+from app.core.auth import get_current_user_id
 from app.core.exceptions import CardPersistenceError, OpenRouterError, OpenRouterTimeoutError
 from app.db.mongodb import get_cards_collection_dependency
 from app.models.card import CapturedCardResponse
@@ -28,15 +29,16 @@ def get_card_service(
 )
 async def process_card(
     payload: ProcessCardRequest,
+    owner_user_id: str = Depends(get_current_user_id),
     card_service: CardService = Depends(get_card_service),
 ) -> CapturedCardResponse:
     try:
         return await card_service.process_and_save(
-            owner_user_id=payload.owner_user_id,
+            owner_user_id=owner_user_id,
             raw_ocr_text=payload.raw_ocr_text,
         )
     except OpenRouterTimeoutError as exc:
-        logger.warning("OpenRouter timeout while processing card for user %s", payload.owner_user_id)
+        logger.warning("OpenRouter timeout while processing card for user %s", owner_user_id)
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LLM parsing service timed out. Please try again.",

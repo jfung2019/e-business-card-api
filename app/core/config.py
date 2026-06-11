@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     openrouter_timeout_seconds: float = 30.0
     openrouter_max_retries: int = 2
 
+    firebase_credentials_path: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

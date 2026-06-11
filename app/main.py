@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_v1_router
 from app.core.config import get_settings
+from app.core.firebase import init_firebase
 from app.db.mongodb import close_motor_client, get_motor_client
 
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     settings = get_settings()
     get_motor_client(settings)
+    init_firebase(settings)
     logger.info("MongoDB client initialized")
     yield
     await close_motor_client()
