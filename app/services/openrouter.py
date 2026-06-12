@@ -17,6 +17,7 @@ Return ONLY a valid JSON object with exactly this shape:
   "core_fields": {
     "name": "string (required)",
     "company_name": "string or null",
+    "job_title": "string or null",
     "email": "string or null",
     "phone": "string or null",
     "website": "string or null"
@@ -27,7 +28,7 @@ Return ONLY a valid JSON object with exactly this shape:
 }
 
 Rules:
-- Put standard fields in core_fields. Put everything else (fax, title, address, social handles, etc.) in custom_fields.
+- Put standard fields in core_fields (including job_title for role/position). Put everything else (fax, address, social handles, etc.) in custom_fields.
 - name is required. Use null for unknown core_fields values, not empty strings.
 - custom_fields values must be strings. Omit empty custom_fields entries.
 - Do not wrap the JSON in markdown. Do not add commentary or extra keys.

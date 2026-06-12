@@ -9,6 +9,7 @@ class CoreFields(BaseModel):
 
     name: str = Field(..., min_length=1, description="Contact full name")
     company_name: str | None = None
+    job_title: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
     website: str | None = None

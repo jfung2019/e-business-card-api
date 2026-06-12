@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     mongo_uri: str = "mongodb://mongodb:27017"
     mongo_db_name: str = "e_business_card"
     mongo_cards_collection: str = "captured_cards"
+    mongo_user_cards_collection: str = "user_cards"
 
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"

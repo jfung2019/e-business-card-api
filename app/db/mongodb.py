@@ -32,5 +32,14 @@ async def close_motor_client() -> None:
         _client = None
 
 
+def get_user_cards_collection(settings: Settings | None = None) -> AsyncIOMotorCollection:
+    resolved = settings or get_settings()
+    return get_database(resolved)[resolved.mongo_user_cards_collection]
+
+
 async def get_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
     yield get_cards_collection()
+
+
+async def get_user_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
+    yield get_user_cards_collection()
