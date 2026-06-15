@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
 
 from app.core.config import Settings, get_settings
+from app.services.scan_image_service import ScanImageService
 
 _client: AsyncIOMotorClient | None = None
 
@@ -43,3 +44,7 @@ async def get_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollec
 
 async def get_user_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
     yield get_user_cards_collection()
+
+
+async def get_scan_image_service_dependency() -> AsyncGenerator[ScanImageService, None]:
+    yield ScanImageService(get_database())

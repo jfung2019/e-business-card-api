@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+WalletDisplay = Literal["photo", "classic"]
 
 
 class CoreFields(BaseModel):
@@ -47,9 +49,20 @@ class CapturedCardBase(BaseModel):
 class CapturedCardDocument(CapturedCardBase):
     owner_user_id: str = Field(..., min_length=1)
     scanned_at: datetime
+    scan_image_id: str | None = None
+    wallet_display: WalletDisplay | None = None
 
 
-class CapturedCardResponse(CapturedCardDocument):
+class CapturedCardResponse(CapturedCardBase):
     id: str = Field(..., alias="_id")
+    owner_user_id: str
+    scanned_at: datetime
+    scan_image_url: str | None = Field(
+        default=None,
+        description="API path to download the scan image (requires Authorization header)",
+    )
+    wallet_display: WalletDisplay = Field(
+        description="Wallet face: photo scan or classic palette (defaults to photo when a scan exists)",
+    )
 
     model_config = ConfigDict(populate_by_name=True)

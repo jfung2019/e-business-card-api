@@ -12,3 +12,11 @@ class OpenRouterTimeoutError(OpenRouterError):
 
 class CardPersistenceError(Exception):
     """Raised when MongoDB persistence fails validation or write operations."""
+
+
+class ScanImageNotFoundError(Exception):
+    """Raised when a card has no scan image or the GridFS file is missing."""
+
+
+class CardNotFoundError(Exception):
+    """Raised when a captured card cannot be found for the authenticated user."""
