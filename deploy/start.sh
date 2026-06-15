@@ -17,7 +17,23 @@ if [[ ! -f firebase-service-account.json ]]; then
   exit 1
 fi
 
-docker compose -f deploy/docker-compose.prod.yml up -d --build
+# docker-compose.prod.yml builds MONGO_URI from these — both must be non-empty
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+if [[ -z "${MONGO_ROOT_USERNAME:-}" || -z "${MONGO_ROOT_PASSWORD:-}" ]]; then
+  echo "Missing MONGO_ROOT_USERNAME or MONGO_ROOT_PASSWORD in .env"
+  echo "Copy deploy/.env.production.example to .env and set both values."
+  exit 1
+fi
+
+docker compose \
+  --project-directory "$ROOT_DIR" \
+  --env-file "$ROOT_DIR/.env" \
+  -f deploy/docker-compose.prod.yml \
+  up -d --build
 
 echo ""
 echo "API listening on http://127.0.0.1:8002 (localhost only)."
