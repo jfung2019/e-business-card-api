@@ -19,7 +19,8 @@ fi
 
 set -a
 # shellcheck disable=SC1091
-source .env
+# Strip Windows CRLF if .env was uploaded from Windows
+source <(sed 's/\r$//' .env)
 set +a
 
 if [[ -z "${MONGO_ROOT_USERNAME:-}" || -z "${MONGO_ROOT_PASSWORD:-}" ]]; then
