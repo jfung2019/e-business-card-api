@@ -65,4 +65,4 @@ class CapturedCardResponse(CapturedCardBase):
         description="Wallet face: photo scan or classic palette (defaults to photo when a scan exists)",
     )
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)

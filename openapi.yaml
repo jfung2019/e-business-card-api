@@ -206,6 +206,113 @@ paths:
           description: LLM parsing service unavailable
         "504":
           description: LLM parsing service timed out
+  /api/v1/user-cards/process:
+    post:
+      summary: Parse OCR text and create a user business card with optional scan image
+      operationId: processUserCard
+      tags:
+        - user-cards
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - raw_ocr_text
+              properties:
+                raw_ocr_text:
+                  type: string
+                  minLength: 1
+                scan_image:
+                  type: string
+                  format: binary
+                scan_image_base64:
+                  type: string
+                design_id:
+                  type: string
+                  default: classic
+                is_primary:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: User card parsed and saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCardResponse"
+        "401":
+          description: Missing or invalid Firebase ID token
+        "502":
+          description: LLM parsing service unavailable
+        "504":
+          description: LLM parsing service timed out
+        "500":
+          description: Database persistence failed
+  /api/v1/user-cards/{card_id}/wallet-display:
+    patch:
+      summary: Set display mode for a user card (photo scan vs design template)
+      operationId: updateUserCardWalletDisplay
+      tags:
+        - user-cards
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: card_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWalletDisplayRequest"
+      responses:
+        "200":
+          description: User card updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCardResponse"
+        "404":
+          description: User card not found
+        "400":
+          description: Invalid wallet display request
+        "401":
+          description: Missing or invalid Firebase ID token
+  /api/v1/user-cards/{card_id}/scan-image:
+    get:
+      summary: Download the scanned image for a user business card
+      operationId: getUserCardScanImage
+      tags:
+        - user-cards
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: card_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scan image bytes
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: User card or scan image not found
+        "401":
+          description: Missing or invalid Firebase ID token
+        "500":
+          description: Failed to load scan image
   /api/v1/user-cards/{card_id}:
     put:
       summary: Update a user business card
@@ -410,6 +517,7 @@ components:
         - design_type
         - is_primary
         - sort_order
+        - wallet_display
         - created_at
         - updated_at
       properties:
@@ -434,6 +542,13 @@ components:
           type: boolean
         sort_order:
           type: integer
+        scan_image_url:
+          type: string
+          nullable: true
+          description: API path to download the scan image (requires Authorization header)
+        wallet_display:
+          type: string
+          enum: [photo, classic]
         created_at:
           type: string
           format: date-time

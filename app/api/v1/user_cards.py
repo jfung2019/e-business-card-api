@@ -1,11 +1,23 @@
+import base64
+import binascii
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 from app.core.auth import get_current_user_id
-from app.core.exceptions import CardPersistenceError, OpenRouterError, OpenRouterTimeoutError
-from app.db.mongodb import get_user_cards_collection_dependency
+from app.core.exceptions import (
+    CardPersistenceError,
+    OpenRouterError,
+    OpenRouterTimeoutError,
+    ScanImageNotFoundError,
+)
+from app.db.mongodb import (
+    get_scan_image_service_dependency,
+    get_user_cards_collection_dependency,
+)
+from app.models.requests import UpdateWalletDisplayRequest
 from app.models.user_card import (
     ParsedUserCardPreview,
     ParseUserCardRequest,
@@ -14,17 +26,22 @@ from app.models.user_card import (
     UserCardResponse,
     UserCardUpdate,
 )
+from app.services.scan_image_service import ScanImageService
 from app.services.user_card_service import UserCardNotFoundError, UserCardService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/user-cards", tags=["user-cards"])
 
+MAX_SCAN_IMAGE_BYTES = 10 * 1024 * 1024
+ALLOWED_SCAN_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+
 
 def get_user_card_service(
     collection: AsyncIOMotorCollection = Depends(get_user_cards_collection_dependency),
+    scan_image_service: ScanImageService = Depends(get_scan_image_service_dependency),
 ) -> UserCardService:
-    return UserCardService(collection=collection)
+    return UserCardService(collection=collection, scan_image_service=scan_image_service)
 
 
 @router.get(
@@ -110,6 +127,140 @@ async def parse_user_card(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="LLM parsing service is unavailable.",
         ) from exc
+
+
+@router.post(
+    "/process",
+    response_model=UserCardResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Parse OCR text and create a user business card with optional scan image",
+)
+async def process_user_card(
+    raw_ocr_text: str = Form(..., min_length=1),
+    scan_image: UploadFile | None = File(None),
+    scan_image_base64: str | None = Form(None),
+    design_id: str = Form("classic"),
+    is_primary: bool = Form(False),
+    owner_user_id: str = Depends(get_current_user_id),
+    user_card_service: UserCardService = Depends(get_user_card_service),
+) -> UserCardResponse:
+    scan_image_bytes: bytes | None = None
+    scan_image_content_type = "image/jpeg"
+
+    if scan_image_base64:
+        payload = scan_image_base64.strip()
+        if payload.startswith("data:") and "," in payload:
+            payload = payload.split(",", 1)[1]
+        try:
+            scan_image_bytes = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="scan_image_base64 is not valid base64.",
+            ) from exc
+
+    if scan_image is not None and scan_image.filename and scan_image_bytes is None:
+        scan_image_bytes = await scan_image.read()
+        if scan_image_bytes:
+            declared_type = (scan_image.content_type or "image/jpeg").split(";")[0].strip().lower()
+            if declared_type not in ALLOWED_SCAN_IMAGE_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail="Scan image must be JPEG, PNG, or WebP.",
+                )
+            scan_image_content_type = declared_type
+
+    if scan_image_bytes and len(scan_image_bytes) > MAX_SCAN_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Scan image must be 10 MB or smaller.",
+        )
+
+    try:
+        return await user_card_service.process_and_save(
+            owner_user_id=owner_user_id,
+            raw_ocr_text=raw_ocr_text,
+            scan_image_bytes=scan_image_bytes,
+            scan_image_content_type=scan_image_content_type,
+            design_id=design_id.strip() or "classic",
+            is_primary=is_primary,
+        )
+    except OpenRouterTimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="LLM parsing service timed out. Please try again.",
+        ) from exc
+    except OpenRouterError as exc:
+        logger.error("OpenRouter error while processing user card: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM parsing service is unavailable.",
+        ) from exc
+    except CardPersistenceError as exc:
+        logger.error("Database error while saving user card: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save user card.",
+        ) from exc
+
+
+@router.patch(
+    "/{card_id}/wallet-display",
+    response_model=UserCardResponse,
+    summary="Set display mode for a user card (photo scan vs design template)",
+)
+async def update_user_card_wallet_display(
+    card_id: str,
+    payload: UpdateWalletDisplayRequest,
+    owner_user_id: str = Depends(get_current_user_id),
+    user_card_service: UserCardService = Depends(get_user_card_service),
+) -> UserCardResponse:
+    try:
+        return await user_card_service.update_wallet_display(
+            card_id=card_id,
+            owner_user_id=owner_user_id,
+            wallet_display=payload.wallet_display,
+        )
+    except UserCardNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except CardPersistenceError as exc:
+        logger.error("Failed to update user card wallet display: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/{card_id}/scan-image",
+    summary="Download the scanned image for a user business card",
+    responses={
+        200: {
+            "content": {"image/jpeg": {}},
+            "description": "Scan image bytes",
+        }
+    },
+)
+async def get_user_card_scan_image(
+    card_id: str,
+    owner_user_id: str = Depends(get_current_user_id),
+    user_card_service: UserCardService = Depends(get_user_card_service),
+) -> Response:
+    try:
+        image_bytes, content_type = await user_card_service.get_scan_image(card_id, owner_user_id)
+    except ScanImageNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan image not found.",
+        ) from exc
+    except CardPersistenceError as exc:
+        logger.error("Database error while loading user card scan image: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load scan image.",
+        ) from exc
+
+    return Response(content=image_bytes, media_type=content_type)
 
 
 @router.put(
