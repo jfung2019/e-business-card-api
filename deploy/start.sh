@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build and start API + MongoDB on the server.
-# Run from repo root: bash deploy/start.sh
+# Run from anywhere: sudo bash deploy/start.sh
 
 set -euo pipefail
 
@@ -17,7 +17,6 @@ if [[ ! -f firebase-service-account.json ]]; then
   exit 1
 fi
 
-# docker-compose.prod.yml builds MONGO_URI from these — both must be non-empty
 set -a
 # shellcheck disable=SC1091
 source .env
@@ -25,17 +24,22 @@ set +a
 
 if [[ -z "${MONGO_ROOT_USERNAME:-}" || -z "${MONGO_ROOT_PASSWORD:-}" ]]; then
   echo "Missing MONGO_ROOT_USERNAME or MONGO_ROOT_PASSWORD in .env"
-  echo "Copy deploy/.env.production.example to .env and set both values."
   exit 1
 fi
 
-docker compose \
+DOCKER=(docker)
+if ! docker info >/dev/null 2>&1; then
+  DOCKER=(sudo docker)
+fi
+
+"${DOCKER[@]}" compose \
   --project-directory "$ROOT_DIR" \
   --env-file "$ROOT_DIR/.env" \
   -f deploy/docker-compose.prod.yml \
   up -d --build
 
 echo ""
+echo "Repo: $ROOT_DIR"
 echo "API listening on http://127.0.0.1:8002 (localhost only)."
-echo "Test: curl -s http://127.0.0.1:8002/docs | head"
+echo "Test: curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8002/docs"
 echo "Public URL after nginx: https://focms.megaannum.ai:8001/docs"

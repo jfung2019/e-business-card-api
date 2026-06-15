@@ -1,11 +1,12 @@
 # Production stack for a Linux VPS (Alibaba Simple Application Server).
 # MongoDB is NOT exposed to the internet.
 # Docker API on 127.0.0.1:8002 (CMS uses :8000; nginx SSL on :8001 proxies here).
+# Paths are relative to repo root — use: bash deploy/start.sh
 
 services:
   api:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     container_name: ebc-api
     restart: unless-stopped
@@ -21,7 +22,7 @@ services:
       OPENROUTER_MAX_RETRIES: ${OPENROUTER_MAX_RETRIES:-2}
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
     volumes:
-      - ${FIREBASE_CREDENTIALS_PATH:-../firebase-service-account.json}:/app/firebase-service-account.json:ro
+      - ${FIREBASE_CREDENTIALS_PATH:-./firebase-service-account.json}:/app/firebase-service-account.json:ro
     depends_on:
       mongodb:
         condition: service_healthy
