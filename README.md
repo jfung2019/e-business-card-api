@@ -13,6 +13,10 @@ docker compose up --build
 
 API docs: http://localhost:8000/docs
 
+## Production deploy (Alibaba / Linux VPS)
+
+See **[deploy/DEPLOY.md](deploy/DEPLOY.md)** for Simple Application Server setup with Docker, nginx, and Let's Encrypt HTTPS.
+
 ## Endpoints
 
 | Method | Path | Description |
