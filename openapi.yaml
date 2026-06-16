@@ -107,6 +107,29 @@ paths:
           description: Missing or invalid Firebase ID token
         "500":
           description: Failed to load scan image
+  /api/v1/cards/{card_id}:
+    delete:
+      summary: Delete a captured business card
+      operationId: deleteCard
+      tags:
+        - cards
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: card_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Card deleted
+        "404":
+          description: Card not found
+        "401":
+          description: Missing or invalid Firebase ID token
+        "500":
+          description: Database delete failed
   /api/v1/user-cards:
     get:
       summary: List the authenticated user's own business cards

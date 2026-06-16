@@ -132,6 +132,31 @@ class CardService:
         except CardPersistenceError as exc:
             raise ScanImageNotFoundError("Scan image not found") from exc
 
+    async def delete(self, card_id: str, owner_user_id: str) -> None:
+        document = await self._get_owned_card_document(card_id, owner_user_id)
+
+        scan_image_id = document.get("scan_image_id")
+        if scan_image_id and self._scan_images is not None:
+            try:
+                await self._scan_images.delete(scan_image_id)
+            except CardPersistenceError:
+                logger.warning(
+                    "Failed to delete scan image %s for card %s",
+                    scan_image_id,
+                    card_id,
+                )
+
+        try:
+            result = await self._collection.delete_one(
+                {"_id": document["_id"], "owner_user_id": owner_user_id},
+            )
+        except PyMongoError as exc:
+            logger.exception("MongoDB delete failed for card %s", card_id)
+            raise CardPersistenceError("Failed to delete captured card") from exc
+
+        if result.deleted_count == 0:
+            raise CardNotFoundError("Card not found")
+
     async def _get_owned_card_document(self, card_id: str, owner_user_id: str) -> dict:
         try:
             object_id = ObjectId(card_id)

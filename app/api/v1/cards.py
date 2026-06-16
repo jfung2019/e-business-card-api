@@ -156,6 +156,31 @@ async def update_wallet_display(
         ) from exc
 
 
+@router.delete(
+    "/{card_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a captured business card",
+)
+async def delete_card(
+    card_id: str,
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> None:
+    try:
+        await card_service.delete(card_id, owner_user_id)
+    except CardNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Card not found.",
+        ) from exc
+    except CardPersistenceError as exc:
+        logger.error("Database error while deleting card %s: %s", card_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete captured card.",
+        ) from exc
+
+
 @router.get(
     "/{card_id}/scan-image",
     summary="Download the scanned card image for a captured card",

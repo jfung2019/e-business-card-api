@@ -57,3 +57,15 @@ class ScanImageService:
         metadata = grid_out.metadata or {}
         content_type = metadata.get("content_type", "image/jpeg")
         return payload, content_type
+
+    async def delete(self, file_id: str) -> None:
+        try:
+            object_id = ObjectId(file_id)
+        except InvalidId as exc:
+            raise CardPersistenceError("Invalid scan image id") from exc
+
+        try:
+            await self._bucket.delete(object_id)
+        except PyMongoError as exc:
+            logger.exception("GridFS delete failed for file %s", file_id)
+            raise CardPersistenceError("Failed to delete scan image") from exc
