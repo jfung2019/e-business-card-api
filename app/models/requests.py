@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from app.models.card import WalletDisplay
+from app.models.card import PhotoFace, WalletDisplay
 
 
 class ProcessCardRequest(BaseModel):
@@ -8,4 +8,5 @@ class ProcessCardRequest(BaseModel):
 
 
 class UpdateWalletDisplayRequest(BaseModel):
-    wallet_display: WalletDisplay
+    wallet_display: WalletDisplay | None = None
+    photo_face: PhotoFace | None = None

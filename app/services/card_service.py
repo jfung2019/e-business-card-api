@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from pymongo.errors import PyMongoError
 
 from app.core.exceptions import CardNotFoundError, CardPersistenceError, ScanImageNotFoundError
-from app.models.card import CapturedCardDocument, CapturedCardResponse, WalletDisplay
+from app.models.card import CapturedCardDocument, CapturedCardResponse, PhotoFace, WalletDisplay
 from app.services.openrouter import OpenRouterService
 from app.services.scan_image_service import ScanImageService
 
@@ -32,6 +32,8 @@ class CardService:
         raw_ocr_text: str,
         scan_image_bytes: bytes | None = None,
         scan_image_content_type: str = "image/jpeg",
+        scan_image_back_bytes: bytes | None = None,
+        scan_image_back_content_type: str = "image/jpeg",
     ) -> CapturedCardResponse:
         parsed = await self._openrouter.parse_ocr_text(raw_ocr_text)
 
@@ -54,22 +56,41 @@ class CardService:
 
         card_id = str(insert_result.inserted_id)
         scan_image_id: str | None = None
+        scan_image_front_id: str | None = None
+        scan_image_back_id: str | None = None
         wallet_display: WalletDisplay = "classic"
+        photo_face: PhotoFace = "front"
 
         if scan_image_bytes:
             if self._scan_images is None:
                 raise CardPersistenceError("Scan image storage is not configured")
-            scan_image_id = await self._scan_images.save(
+            scan_image_front_id = await self._scan_images.save(
                 owner_user_id=owner_user_id,
                 card_id=card_id,
                 data=scan_image_bytes,
                 content_type=scan_image_content_type,
             )
+            scan_image_id = scan_image_front_id
+            if scan_image_back_bytes:
+                scan_image_back_id = await self._scan_images.save(
+                    owner_user_id=owner_user_id,
+                    card_id=card_id,
+                    data=scan_image_back_bytes,
+                    content_type=scan_image_back_content_type,
+                )
             wallet_display = "photo"
             try:
                 await self._collection.update_one(
                     {"_id": insert_result.inserted_id},
-                    {"$set": {"scan_image_id": scan_image_id, "wallet_display": wallet_display}},
+                    {
+                        "$set": {
+                            "scan_image_id": scan_image_id,
+                            "scan_image_front_id": scan_image_front_id,
+                            "scan_image_back_id": scan_image_back_id,
+                            "wallet_display": wallet_display,
+                            "photo_face": photo_face,
+                        }
+                    },
                 )
             except PyMongoError as exc:
                 logger.exception("Failed to link scan image to card %s", card_id)
@@ -80,7 +101,10 @@ class CardService:
                 **validated_payload,
                 "_id": insert_result.inserted_id,
                 "scan_image_id": scan_image_id,
+                "scan_image_front_id": scan_image_front_id,
+                "scan_image_back_id": scan_image_back_id,
                 "wallet_display": wallet_display,
+                "photo_face": photo_face,
             }
         )
 
@@ -101,29 +125,45 @@ class CardService:
         self,
         card_id: str,
         owner_user_id: str,
-        wallet_display: WalletDisplay,
+        wallet_display: WalletDisplay | None = None,
+        photo_face: PhotoFace | None = None,
     ) -> CapturedCardResponse:
         document = await self._get_owned_card_document(card_id, owner_user_id)
 
-        if wallet_display == "photo" and not document.get("scan_image_id"):
+        resolved_front = CardService._scan_front_image_id(document)
+        next_wallet_display = wallet_display or CardService._resolve_wallet_display(document, resolved_front)
+        next_photo_face = photo_face or CardService._resolve_photo_face(document)
+
+        if next_wallet_display == "photo" and not resolved_front:
             raise CardPersistenceError("Cannot show photo display without a scan image")
+        if next_photo_face == "back" and not CardService._scan_back_image_id(document):
+            raise CardPersistenceError("Cannot show back photo without a back scan image")
 
         try:
             await self._collection.update_one(
                 {"_id": document["_id"]},
-                {"$set": {"wallet_display": wallet_display}},
+                {"$set": {"wallet_display": next_wallet_display, "photo_face": next_photo_face}},
             )
         except PyMongoError as exc:
             logger.exception("Failed to update wallet display for card %s", card_id)
             raise CardPersistenceError("Failed to update wallet display") from exc
 
-        updated = {**document, "wallet_display": wallet_display}
+        updated = {**document, "wallet_display": next_wallet_display, "photo_face": next_photo_face}
         return self._to_response(updated)
 
-    async def get_scan_image(self, card_id: str, owner_user_id: str) -> tuple[bytes, str]:
+    async def get_scan_image(
+        self,
+        card_id: str,
+        owner_user_id: str,
+        face: PhotoFace = "front",
+    ) -> tuple[bytes, str]:
         document = await self._get_owned_card_document(card_id, owner_user_id)
 
-        scan_image_id = document.get("scan_image_id")
+        scan_image_id = (
+            CardService._scan_front_image_id(document)
+            if face == "front"
+            else CardService._scan_back_image_id(document)
+        )
         if not scan_image_id or self._scan_images is None:
             raise ScanImageNotFoundError("Scan image not found")
 
@@ -135,16 +175,25 @@ class CardService:
     async def delete(self, card_id: str, owner_user_id: str) -> None:
         document = await self._get_owned_card_document(card_id, owner_user_id)
 
-        scan_image_id = document.get("scan_image_id")
-        if scan_image_id and self._scan_images is not None:
-            try:
-                await self._scan_images.delete(scan_image_id)
-            except CardPersistenceError:
-                logger.warning(
-                    "Failed to delete scan image %s for card %s",
-                    scan_image_id,
-                    card_id,
-                )
+        scan_image_ids = {
+            image_id
+            for image_id in (
+                document.get("scan_image_id"),
+                document.get("scan_image_front_id"),
+                document.get("scan_image_back_id"),
+            )
+            if image_id
+        }
+        if scan_image_ids and self._scan_images is not None:
+            for scan_image_id in scan_image_ids:
+                try:
+                    await self._scan_images.delete(scan_image_id)
+                except CardPersistenceError:
+                    logger.warning(
+                        "Failed to delete scan image %s for card %s",
+                        scan_image_id,
+                        card_id,
+                    )
 
         try:
             result = await self._collection.delete_one(
@@ -183,6 +232,26 @@ class CardService:
         return f"/api/v1/cards/{card_id}/scan-image"
 
     @staticmethod
+    def _scan_front_image_id(document: dict) -> str | None:
+        return document.get("scan_image_front_id") or document.get("scan_image_id")
+
+    @staticmethod
+    def _scan_back_image_id(document: dict) -> str | None:
+        return document.get("scan_image_back_id")
+
+    @staticmethod
+    def _scan_front_image_url(card_id: str, scan_image_front_id: str | None) -> str | None:
+        if not scan_image_front_id:
+            return None
+        return f"/api/v1/cards/{card_id}/scan-image/front"
+
+    @staticmethod
+    def _scan_back_image_url(card_id: str, scan_image_back_id: str | None) -> str | None:
+        if not scan_image_back_id:
+            return None
+        return f"/api/v1/cards/{card_id}/scan-image/back"
+
+    @staticmethod
     def _resolve_wallet_display(document: dict, scan_image_id: str | None) -> WalletDisplay:
         stored = document.get("wallet_display")
         if stored in ("photo", "classic"):
@@ -190,15 +259,26 @@ class CardService:
         return "photo" if scan_image_id else "classic"
 
     @staticmethod
+    def _resolve_photo_face(document: dict) -> PhotoFace:
+        stored = document.get("photo_face")
+        if stored in ("front", "back"):
+            return stored
+        return "front"
+
+    @staticmethod
     def _to_response(document: dict) -> CapturedCardResponse:
         card_id = str(document["_id"])
-        scan_image_id = document.get("scan_image_id")
+        scan_image_front_id = CardService._scan_front_image_id(document)
+        scan_image_back_id = CardService._scan_back_image_id(document)
         return CapturedCardResponse(
             _id=card_id,
             owner_user_id=document["owner_user_id"],
             scanned_at=document["scanned_at"],
             core_fields=document["core_fields"],
             custom_fields=document.get("custom_fields", {}),
-            scan_image_url=CardService._scan_image_url(card_id, scan_image_id),
-            wallet_display=CardService._resolve_wallet_display(document, scan_image_id),
+            scan_image_url=CardService._scan_image_url(card_id, scan_image_front_id),
+            scan_image_front_url=CardService._scan_front_image_url(card_id, scan_image_front_id),
+            scan_image_back_url=CardService._scan_back_image_url(card_id, scan_image_back_id),
+            wallet_display=CardService._resolve_wallet_display(document, scan_image_front_id),
+            photo_face=CardService._resolve_photo_face(document),
         )

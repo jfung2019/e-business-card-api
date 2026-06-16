@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Any
@@ -89,6 +90,22 @@ class OpenRouterService:
 
             if response.status_code >= 400:
                 detail = self._extract_error_message(response)
+                if self._is_transient_http_status(response.status_code):
+                    last_error = OpenRouterError(
+                        f"OpenRouter transient HTTP {response.status_code}: {detail}",
+                        status_code=response.status_code,
+                    )
+                    logger.warning(
+                        "OpenRouter transient HTTP %s on attempt %s/%s: %s",
+                        response.status_code,
+                        attempt,
+                        self._settings.openrouter_max_retries + 1,
+                        detail,
+                    )
+                    if attempt > self._settings.openrouter_max_retries:
+                        raise last_error
+                    await asyncio.sleep(self._retry_backoff_seconds(attempt))
+                    continue
                 logger.error(
                     "OpenRouter HTTP %s: %s",
                     response.status_code,
@@ -102,6 +119,15 @@ class OpenRouterService:
             return self._parse_completion_response(response.json())
 
         raise last_error or OpenRouterError("OpenRouter request failed")
+
+    @staticmethod
+    def _is_transient_http_status(status_code: int) -> bool:
+        return status_code in {429, 500, 502, 503, 504}
+
+    @staticmethod
+    def _retry_backoff_seconds(attempt: int) -> float:
+        # Small linear backoff keeps user-facing latency bounded.
+        return min(0.5 * attempt, 2.0)
 
     def _extract_error_message(self, response: httpx.Response) -> str:
         try:

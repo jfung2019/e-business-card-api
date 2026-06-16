@@ -15,7 +15,7 @@ from app.core.exceptions import (
     ScanImageNotFoundError,
 )
 from app.db.mongodb import get_cards_collection_dependency, get_scan_image_service_dependency
-from app.models.card import CapturedCardResponse
+from app.models.card import CapturedCardResponse, PhotoFace
 from app.models.requests import UpdateWalletDisplayRequest
 from app.services.card_service import CardService
 from app.services.scan_image_service import ScanImageService
@@ -64,11 +64,15 @@ async def process_card(
     raw_ocr_text: str = Form(..., min_length=1),
     scan_image: UploadFile | None = File(None),
     scan_image_base64: str | None = Form(None),
+    scan_image_back: UploadFile | None = File(None),
+    scan_image_back_base64: str | None = Form(None),
     owner_user_id: str = Depends(get_current_user_id),
     card_service: CardService = Depends(get_card_service),
 ) -> CapturedCardResponse:
     scan_image_bytes: bytes | None = None
     scan_image_content_type = "image/jpeg"
+    scan_image_back_bytes: bytes | None = None
+    scan_image_back_content_type = "image/jpeg"
 
     if scan_image_base64:
         payload = scan_image_base64.strip()
@@ -99,12 +103,43 @@ async def process_card(
             detail="Scan image must be 10 MB or smaller.",
         )
 
+    if scan_image_back_base64:
+        payload = scan_image_back_base64.strip()
+        if payload.startswith("data:") and "," in payload:
+            payload = payload.split(",", 1)[1]
+        try:
+            scan_image_back_bytes = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="scan_image_back_base64 is not valid base64.",
+            ) from exc
+
+    if scan_image_back is not None and scan_image_back.filename and scan_image_back_bytes is None:
+        scan_image_back_bytes = await scan_image_back.read()
+        if scan_image_back_bytes:
+            declared_type = (scan_image_back.content_type or "image/jpeg").split(";")[0].strip().lower()
+            if declared_type not in ALLOWED_SCAN_IMAGE_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail="Back scan image must be JPEG, PNG, or WebP.",
+                )
+            scan_image_back_content_type = declared_type
+
+    if scan_image_back_bytes and len(scan_image_back_bytes) > MAX_SCAN_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Back scan image must be 10 MB or smaller.",
+        )
+
     try:
         return await card_service.process_and_save(
             owner_user_id=owner_user_id,
             raw_ocr_text=raw_ocr_text,
             scan_image_bytes=scan_image_bytes,
             scan_image_content_type=scan_image_content_type,
+            scan_image_back_bytes=scan_image_back_bytes,
+            scan_image_back_content_type=scan_image_back_content_type,
         )
     except OpenRouterTimeoutError as exc:
         logger.warning("OpenRouter timeout while processing card for user %s", owner_user_id)
@@ -142,6 +177,7 @@ async def update_wallet_display(
             card_id=card_id,
             owner_user_id=owner_user_id,
             wallet_display=payload.wallet_display,
+            photo_face=payload.photo_face,
         )
     except CardNotFoundError as exc:
         raise HTTPException(
@@ -197,7 +233,40 @@ async def get_card_scan_image(
     card_service: CardService = Depends(get_card_service),
 ) -> Response:
     try:
-        image_bytes, content_type = await card_service.get_scan_image(card_id, owner_user_id)
+        image_bytes, content_type = await card_service.get_scan_image(card_id, owner_user_id, face="front")
+    except ScanImageNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan image not found.",
+        ) from exc
+    except CardPersistenceError as exc:
+        logger.error("Database error while loading scan image: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load scan image.",
+        ) from exc
+
+    return Response(content=image_bytes, media_type=content_type)
+
+
+@router.get(
+    "/{card_id}/scan-image/{face}",
+    summary="Download the scanned card image for a captured card by face",
+    responses={
+        200: {
+            "content": {"image/jpeg": {}},
+            "description": "Scan image bytes",
+        }
+    },
+)
+async def get_card_scan_image_by_face(
+    card_id: str,
+    face: PhotoFace,
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> Response:
+    try:
+        image_bytes, content_type = await card_service.get_scan_image(card_id, owner_user_id, face=face)
     except ScanImageNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

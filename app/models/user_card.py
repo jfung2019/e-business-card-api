@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.card import CapturedCardBase, CoreFields, WalletDisplay
+from app.models.card import CapturedCardBase, CoreFields, PhotoFace, WalletDisplay
 
 
 class DesignType(StrEnum):
@@ -54,7 +54,10 @@ class UserCardDocument(UserCardBase):
     is_primary: bool = False
     sort_order: int = 0
     scan_image_id: str | None = None
+    scan_image_front_id: str | None = None
+    scan_image_back_id: str | None = None
     wallet_display: WalletDisplay | None = None
+    photo_face: PhotoFace | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -65,8 +68,19 @@ class UserCardResponse(UserCardDocument):
         default=None,
         description="API path to download the scan image (requires Authorization header)",
     )
+    scan_image_front_url: str | None = Field(
+        default=None,
+        description="API path to download the front scan image (requires Authorization header)",
+    )
+    scan_image_back_url: str | None = Field(
+        default=None,
+        description="API path to download the back scan image (requires Authorization header)",
+    )
     wallet_display: WalletDisplay = Field(
         description="Card face: photo scan or selected design template (defaults to photo when a scan exists)",
+    )
+    photo_face: PhotoFace = Field(
+        description="Photo face being displayed when wallet display is photo",
     )
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
