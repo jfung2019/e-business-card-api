@@ -3,9 +3,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 
 from app.api.v1 import api_v1_router
+from app.core.config import get_settings
+from app.core.firebase import init_firebase
+from app.db.mongodb import close_motor_client, get_motor_client
+from app.web.routes import router as share_web_router
 from app.core.config import get_settings
 from app.core.firebase import init_firebase
 from app.db.mongodb import close_motor_client, get_motor_client
@@ -42,13 +45,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_v1_router, prefix=settings.api_v1_prefix)
-
-    @app.get("/c/{token}", include_in_schema=False)
-    async def resolve_share_link_short(token: str) -> RedirectResponse:
-        return RedirectResponse(
-            url=f"{settings.api_v1_prefix}/public/user-cards/{token}",
-            status_code=307,
-        )
+    app.include_router(share_web_router)
 
     return app
 
