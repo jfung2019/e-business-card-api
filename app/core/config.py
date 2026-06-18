@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     mongo_db_name: str = "e_business_card"
     mongo_cards_collection: str = "captured_cards"
     mongo_user_cards_collection: str = "user_cards"
+    mongo_share_links_collection: str = "share_links"
+
+    share_public_base_url: str = "https://focms.megaannum.ai:8001/c"
 
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
