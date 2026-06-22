@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -53,7 +54,8 @@ class OpenRouterService:
         }
 
         last_error: Exception | None = None
-        for attempt in range(1, self._settings.openrouter_max_retries + 2):
+        max_attempts = self._settings.openrouter_max_retries + 1
+        for attempt in range(1, max_attempts + 1):
             try:
                 async with httpx.AsyncClient(
                     base_url=self._settings.openrouter_base_url,
@@ -73,8 +75,9 @@ class OpenRouterService:
                     attempt,
                     self._settings.openrouter_max_retries + 1,
                 )
-                if attempt > self._settings.openrouter_max_retries:
+                if attempt >= max_attempts:
                     raise last_error from exc
+                await asyncio.sleep(self._retry_backoff_seconds(attempt))
                 continue
             except httpx.RequestError as exc:
                 last_error = OpenRouterError(f"OpenRouter network error: {exc}")
@@ -84,8 +87,9 @@ class OpenRouterService:
                     self._settings.openrouter_max_retries + 1,
                     exc,
                 )
-                if attempt > self._settings.openrouter_max_retries:
+                if attempt >= max_attempts:
                     raise last_error from exc
+                await asyncio.sleep(self._retry_backoff_seconds(attempt))
                 continue
 
             if response.status_code >= 400:
@@ -102,7 +106,7 @@ class OpenRouterService:
                         self._settings.openrouter_max_retries + 1,
                         detail,
                     )
-                    if attempt > self._settings.openrouter_max_retries:
+                    if attempt >= max_attempts:
                         raise last_error
                     await asyncio.sleep(self._retry_backoff_seconds(attempt))
                     continue
@@ -116,7 +120,20 @@ class OpenRouterService:
                     status_code=response.status_code,
                 )
 
-            return self._parse_completion_response(response.json())
+            try:
+                return self._parse_completion_response(response.json())
+            except OpenRouterError as exc:
+                last_error = exc
+                logger.warning(
+                    "OpenRouter response parse failed on attempt %s/%s: %s",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                if attempt >= max_attempts:
+                    raise
+                await asyncio.sleep(self._retry_backoff_seconds(attempt))
+                continue
 
         raise last_error or OpenRouterError("OpenRouter request failed")
 
@@ -152,21 +169,47 @@ class OpenRouterService:
             ],
         }
 
+    @staticmethod
+    def _extract_json_object(content: str | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(content, dict):
+            return content
+
+        text = content.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```+\s*$", "", text).strip()
+
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end <= start:
+            raise OpenRouterError("OpenRouter returned invalid JSON")
+
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise OpenRouterError("OpenRouter returned invalid JSON") from exc
+
+        if not isinstance(parsed, dict):
+            raise OpenRouterError("OpenRouter returned invalid JSON")
+        return parsed
+
     def _parse_completion_response(self, body: dict[str, Any]) -> CapturedCardBase:
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise OpenRouterError("OpenRouter response missing message content") from exc
 
-        if isinstance(content, dict):
-            parsed = content
-        else:
-            try:
-                parsed = json.loads(content)
-            except json.JSONDecodeError as exc:
-                raise OpenRouterError("OpenRouter returned invalid JSON") from exc
-
         try:
+            parsed = self._extract_json_object(content)
             return CapturedCardBase.model_validate(parsed)
+        except OpenRouterError:
+            raise
         except Exception as exc:
             raise OpenRouterError(f"OpenRouter JSON failed schema validation: {exc}") from exc
