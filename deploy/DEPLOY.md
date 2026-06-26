@@ -117,3 +117,4 @@ bash deploy/start.sh
 | `502 Bad Gateway` | `bash deploy/start.sh`, check `docker logs ebc-api` |
 | nginx cert error | Match paths in `/etc/letsencrypt/live/focms.megaannum.ai/` |
 | Missing secrets | Ensure `.env` and `firebase-service-account.json` in repo root |
+| **413** on card scan (front + back) | nginx default upload limit is 1 MB. After `git pull`, copy `deploy/nginx/focms-ebc-8001.conf` and `sudo nginx -t && sudo systemctl reload nginx` (`client_max_body_size 25m`) |
