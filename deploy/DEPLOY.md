@@ -118,3 +118,4 @@ bash deploy/start.sh
 | nginx cert error | Match paths in `/etc/letsencrypt/live/focms.megaannum.ai/` |
 | Missing secrets | Ensure `.env` and `firebase-service-account.json` in repo root |
 | **413** on card scan (front + back) | nginx default upload limit is 1 MB. After `git pull`, copy `deploy/nginx/focms-ebc-8001.conf` and `sudo nginx -t && sudo systemctl reload nginx` (`client_max_body_size 25m`) |
+| App shows **Parsing service is busy** | Upload reached the API but OpenRouter parsing failed. Run `git pull && bash deploy/start.sh` (rebuilds the API container). Check `docker logs --tail 100 ebc-api` for `OpenRouter error` lines. |

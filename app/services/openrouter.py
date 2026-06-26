@@ -8,11 +8,23 @@ import httpx
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import OpenRouterError, OpenRouterTimeoutError
+from pydantic import EmailStr, TypeAdapter, ValidationError
+
 from app.models.card import CapturedCardBase
 
 logger = logging.getLogger(__name__)
 
+_CORE_FIELD_KEYS = frozenset(
+    {"name", "company_name", "job_title", "email", "phone", "website"},
+)
+_OPTIONAL_CORE_FIELD_KEYS = frozenset(
+    {"company_name", "job_title", "email", "phone", "website"},
+)
+_EMAIL_ADAPTER = TypeAdapter(EmailStr)
+
 SYSTEM_PROMPT = """You extract structured contact data from raw OCR text of physical business cards.
+
+OCR text may include a back-of-card section after a line containing only `--- BACK ---`. Treat both sides as one contact; prefer the clearest value when fields repeat.
 
 Return ONLY a valid JSON object with exactly this shape:
 {
@@ -200,6 +212,64 @@ class OpenRouterService:
             raise OpenRouterError("OpenRouter returned invalid JSON")
         return parsed
 
+    @staticmethod
+    def _coerce_optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @classmethod
+    def _coerce_email(cls, value: Any) -> str | None:
+        text = cls._coerce_optional_text(value)
+        if text is None:
+            return None
+        try:
+            return str(_EMAIL_ADAPTER.validate_python(text))
+        except (ValidationError, ValueError):
+            return None
+
+    @classmethod
+    def _normalize_llm_payload(cls, parsed: dict[str, Any]) -> dict[str, Any]:
+        core_raw = parsed.get("core_fields")
+        if not isinstance(core_raw, dict):
+            return parsed
+
+        custom_raw = parsed.get("custom_fields")
+        custom: dict[str, str] = {}
+        if isinstance(custom_raw, dict):
+            for key, raw in custom_raw.items():
+                text = cls._coerce_optional_text(raw)
+                if text:
+                    custom[str(key).strip()] = text
+
+        core: dict[str, Any] = {}
+        for key, value in core_raw.items():
+            key_str = str(key).strip()
+            if key_str in _CORE_FIELD_KEYS:
+                core[key_str] = value
+            else:
+                text = cls._coerce_optional_text(value)
+                if text:
+                    custom[key_str] = text
+
+        for optional_key in _OPTIONAL_CORE_FIELD_KEYS:
+            if optional_key not in core:
+                continue
+            if optional_key == "email":
+                core[optional_key] = cls._coerce_email(core[optional_key])
+            else:
+                core[optional_key] = cls._coerce_optional_text(core[optional_key])
+
+        name = cls._coerce_optional_text(core.get("name"))
+        if name:
+            core["name"] = name
+
+        return {
+            "core_fields": core,
+            "custom_fields": custom,
+        }
+
     def _parse_completion_response(self, body: dict[str, Any]) -> CapturedCardBase:
         try:
             content = body["choices"][0]["message"]["content"]
@@ -208,7 +278,8 @@ class OpenRouterService:
 
         try:
             parsed = self._extract_json_object(content)
-            return CapturedCardBase.model_validate(parsed)
+            normalized = self._normalize_llm_payload(parsed)
+            return CapturedCardBase.model_validate(normalized)
         except OpenRouterError:
             raise
         except Exception as exc:
