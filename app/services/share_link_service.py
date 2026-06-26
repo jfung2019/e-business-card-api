@@ -10,10 +10,16 @@ from pymongo.errors import PyMongoError
 from app.core.config import Settings
 from app.core.exceptions import CardPersistenceError, ScanImageNotFoundError
 from app.models.share_link import ShareLinkDocument, ShareLinkResponse, SharedUserCardResponse
+from app.models.card import CapturedCardResponse
+from app.services.card_service import CardService
 from app.services.scan_image_service import ScanImageService
 
 
 class ShareLinkNotFoundError(Exception):
+    pass
+
+
+class ShareLinkImportError(Exception):
     pass
 
 
@@ -118,6 +124,40 @@ class ShareLinkService:
             scan_image_front_url=front_url if self._scan_front_id(card) else None,
             scan_image_back_url=back_url if self._scan_back_id(card) else None,
             updated_at=card["updated_at"],
+        )
+
+    async def import_to_collection(
+        self,
+        token: str,
+        importer_user_id: str,
+        card_service: CardService,
+    ) -> CapturedCardResponse:
+        try:
+            link = await self._share_links.find_one({"token": token, "is_active": True})
+        except PyMongoError as exc:
+            raise CardPersistenceError("Failed to resolve share link.") from exc
+        if link is None:
+            raise ShareLinkNotFoundError("Shared card not found.")
+
+        if link["owner_user_id"] == importer_user_id:
+            raise ShareLinkImportError("You cannot save your own shared card to your collection.")
+
+        card_object_id = self._parse_object_id(link["card_id"])
+        try:
+            card = await self._user_cards.find_one({"_id": card_object_id})
+        except PyMongoError as exc:
+            raise CardPersistenceError("Failed to load shared card.") from exc
+        if card is None:
+            raise ShareLinkNotFoundError("Shared card not found.")
+
+        return await card_service.import_from_user_card(
+            importer_user_id,
+            core_fields=card["core_fields"],
+            custom_fields=card.get("custom_fields", {}),
+            source_scan_front_id=self._scan_front_id(card),
+            source_scan_back_id=self._scan_back_id(card),
+            wallet_display=card.get("wallet_display", "classic"),
+            photo_face=card.get("photo_face", "front"),
         )
 
     async def get_public_scan_image(self, token: str, face: str) -> tuple[bytes, str]:

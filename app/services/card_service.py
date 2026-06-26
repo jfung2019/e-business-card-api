@@ -108,6 +108,105 @@ class CardService:
             }
         )
 
+    async def import_from_user_card(
+        self,
+        owner_user_id: str,
+        *,
+        core_fields: dict,
+        custom_fields: dict,
+        source_scan_front_id: str | None,
+        source_scan_back_id: str | None,
+        wallet_display: str = "classic",
+        photo_face: str = "front",
+    ) -> CapturedCardResponse:
+        document = CapturedCardDocument(
+            owner_user_id=owner_user_id,
+            scanned_at=datetime.now(UTC),
+            core_fields=core_fields,
+            custom_fields=custom_fields,
+        )
+
+        try:
+            validated_payload = document.model_dump(mode="python")
+            insert_result = await self._collection.insert_one(validated_payload)
+        except ValidationError as exc:
+            logger.exception("Imported card failed validation before persistence")
+            raise CardPersistenceError("Card document failed validation") from exc
+        except PyMongoError as exc:
+            logger.exception("MongoDB insert failed for imported card")
+            raise CardPersistenceError("Failed to persist captured card") from exc
+
+        card_id = str(insert_result.inserted_id)
+        scan_image_id: str | None = None
+        scan_image_front_id: str | None = None
+        scan_image_back_id: str | None = None
+        resolved_wallet_display: WalletDisplay = (
+            wallet_display if wallet_display in ("photo", "classic") else "classic"
+        )
+        resolved_photo_face: PhotoFace = photo_face if photo_face in ("front", "back") else "front"
+
+        if source_scan_front_id:
+            if self._scan_images is None:
+                raise CardPersistenceError("Scan image storage is not configured")
+            scan_image_front_id = await self._copy_scan_image(
+                owner_user_id=owner_user_id,
+                card_id=card_id,
+                source_file_id=source_scan_front_id,
+            )
+            scan_image_id = scan_image_front_id
+            if source_scan_back_id:
+                scan_image_back_id = await self._copy_scan_image(
+                    owner_user_id=owner_user_id,
+                    card_id=card_id,
+                    source_file_id=source_scan_back_id,
+                )
+            resolved_wallet_display = "photo"
+            try:
+                await self._collection.update_one(
+                    {"_id": insert_result.inserted_id},
+                    {
+                        "$set": {
+                            "scan_image_id": scan_image_id,
+                            "scan_image_front_id": scan_image_front_id,
+                            "scan_image_back_id": scan_image_back_id,
+                            "wallet_display": resolved_wallet_display,
+                            "photo_face": resolved_photo_face,
+                        }
+                    },
+                )
+            except PyMongoError as exc:
+                logger.exception("Failed to link scan images to imported card %s", card_id)
+                raise CardPersistenceError("Failed to persist captured card") from exc
+
+        return self._to_response(
+            {
+                **validated_payload,
+                "_id": insert_result.inserted_id,
+                "scan_image_id": scan_image_id,
+                "scan_image_front_id": scan_image_front_id,
+                "scan_image_back_id": scan_image_back_id,
+                "wallet_display": resolved_wallet_display,
+                "photo_face": resolved_photo_face,
+            }
+        )
+
+    async def _copy_scan_image(
+        self,
+        *,
+        owner_user_id: str,
+        card_id: str,
+        source_file_id: str,
+    ) -> str:
+        if self._scan_images is None:
+            raise CardPersistenceError("Scan image storage is not configured")
+        image_bytes, content_type = await self._scan_images.read(source_file_id)
+        return await self._scan_images.save(
+            owner_user_id=owner_user_id,
+            card_id=card_id,
+            data=image_bytes,
+            content_type=content_type,
+        )
+
     async def list_for_user(self, owner_user_id: str) -> list[CapturedCardResponse]:
         try:
             cursor = self._collection.find({"owner_user_id": owner_user_id}).sort(

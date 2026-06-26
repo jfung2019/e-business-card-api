@@ -15,10 +15,16 @@ from app.core.exceptions import (
     ScanImageNotFoundError,
 )
 from app.db.mongodb import get_cards_collection_dependency, get_scan_image_service_dependency
+from app.api.v1.share_links import get_share_link_service
 from app.models.card import CapturedCardResponse, PhotoFace
 from app.models.requests import UpdateWalletDisplayRequest
 from app.services.card_service import CardService
 from app.services.scan_image_service import ScanImageService
+from app.services.share_link_service import (
+    ShareLinkImportError,
+    ShareLinkNotFoundError,
+    ShareLinkService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,36 @@ async def list_cards(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to load captured cards.",
+        ) from exc
+
+
+@router.post(
+    "/from-share/{token}",
+    response_model=CapturedCardResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a shared user card into the authenticated user's collection",
+)
+async def import_card_from_share(
+    token: str,
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+    share_link_service: ShareLinkService = Depends(get_share_link_service),
+) -> CapturedCardResponse:
+    try:
+        return await share_link_service.import_to_collection(
+            token=token,
+            importer_user_id=owner_user_id,
+            card_service=card_service,
+        )
+    except ShareLinkNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ShareLinkImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except CardPersistenceError as exc:
+        logger.error("Failed to import shared card: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save shared card to your collection.",
         ) from exc
 
 
