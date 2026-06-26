@@ -86,6 +86,7 @@ def build_share_page_context(
         "photo_face": photo_face,
         "has_both_faces": bool(front_url and back_url),
         "vcard_url": f"{share_base}/{token}/vcard",
+        "app_url": f"ebusinesscard://c/{token}",
         "page_title": f"{core.name} — E-Business Card",
         "core_name": core.name,
         "core_company": core.company_name,

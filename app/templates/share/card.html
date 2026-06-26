@@ -213,6 +213,20 @@
       color: var(--button-text);
     }
 
+    .button-secondary {
+      background: var(--surface);
+      color: var(--title);
+      border: 1px solid var(--border);
+    }
+
+    .action-hint {
+      margin: 0;
+      color: var(--subtitle);
+      font-size: 0.88rem;
+      line-height: 1.4;
+      text-align: center;
+    }
+
     .footer {
       margin-top: 18px;
       text-align: center;
@@ -300,7 +314,9 @@
         </ul>
 
         <div class="actions">
-          <a class="button button-primary" href="{{ vcard_url }}">Add to Contacts</a>
+          <a class="button button-primary" href="{{ app_url }}">Open in app</a>
+          <p class="action-hint">Save this card to your E-Business Card collection.</p>
+          <a class="button button-secondary" href="{{ vcard_url }}">Add to Contacts</a>
         </div>
       </div>
     </section>
