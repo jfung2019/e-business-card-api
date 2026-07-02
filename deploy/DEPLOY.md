@@ -109,7 +109,38 @@ bash deploy/start.sh
 | Stop | `docker compose -f deploy/docker-compose.prod.yml down` |
 | Renew SSL | `sudo certbot renew --dry-run` |
 
-## Troubleshooting
+## Connect to MongoDB (MongoDB Compass, from your PC)
+
+Production MongoDB is **not** on port 8001 (that is the API). Use an **SSH tunnel** to `127.0.0.1:27017` on the server.
+
+**1. On the server** (after `git pull` — compose binds Mongo to localhost only):
+
+```bash
+cd /opt/e-business-card-api
+git pull
+bash deploy/start.sh
+docker ps   # ebc-mongodb should show 127.0.0.1:27017->27017/tcp
+```
+
+**2. On your PC** — keep this terminal open:
+
+```powershell
+ssh -L 27017:127.0.0.1:27017 root@8.217.183.31
+```
+
+**3. MongoDB Compass** — connection string (use credentials from the **server** `.env`):
+
+```
+mongodb://MONGO_ROOT_USERNAME:MONGO_ROOT_PASSWORD@127.0.0.1:27017/?authSource=admin
+```
+
+Then open database **`e_business_card`**. Collections: `captured_cards`, `user_cards`, `share_links`, `fs.files`, `fs.chunks`.
+
+**Compass SSH tunnel (alternative):** Advanced → SSH → host `8.217.183.31`, user `root` → MongoDB host `127.0.0.1`, port `27017`, auth user/password from server `.env`, auth source `admin`.
+
+Do **not** open port 27017 in the Alibaba cloud firewall — SSH tunnel is enough.
+
+---
 
 | Problem | Fix |
 |---------|-----|

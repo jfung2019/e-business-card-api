@@ -1,5 +1,5 @@
 # Production stack for a Linux VPS (Alibaba Simple Application Server).
-# MongoDB is NOT exposed to the internet.
+# MongoDB binds to 127.0.0.1:27017 on the server only (use SSH tunnel from your PC).
 # Docker API on 127.0.0.1:8002 (CMS uses :8000; nginx SSL on :8001 proxies here).
 # Paths are relative to repo root — use: bash deploy/start.sh
 
@@ -34,6 +34,8 @@ services:
     image: mongo:7
     container_name: ebc-mongodb
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
