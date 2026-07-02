@@ -69,3 +69,18 @@ class ScanImageService:
         except PyMongoError as exc:
             logger.exception("GridFS delete failed for file %s", file_id)
             raise CardPersistenceError("Failed to delete scan image") from exc
+
+    async def delete_for_owner(self, owner_user_id: str) -> None:
+        try:
+            async for grid_file in self._bucket.find({"metadata.owner_user_id": owner_user_id}):
+                try:
+                    await self._bucket.delete(grid_file._id)
+                except PyMongoError:
+                    logger.warning(
+                        "GridFS delete failed for orphan file %s (user %s)",
+                        grid_file._id,
+                        owner_user_id,
+                    )
+        except PyMongoError as exc:
+            logger.exception("GridFS query failed while deleting files for user %s", owner_user_id)
+            raise CardPersistenceError("Failed to delete scan images") from exc
