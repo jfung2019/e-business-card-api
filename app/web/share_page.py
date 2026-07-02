@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.core.config import Settings
 from app.models.share_link import SharedUserCardResponse
-from app.web.share_palettes import palette_for_token
+from app.web.card_designs import design_for_id
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
@@ -34,18 +34,7 @@ def resolve_display_mode(card: SharedUserCardResponse) -> str:
     return "classic"
 
 
-def primary_contact_detail(card: SharedUserCardResponse) -> str:
-    core = card.core_fields
-    if core.phone and core.phone.strip():
-        return core.phone.strip()
-    if core.email:
-        return str(core.email)
-    if core.job_title and core.job_title.strip():
-        return core.job_title.strip()
-    return "No contact info"
-
-
-def brand_label(card: SharedUserCardResponse) -> str:
+def company_label(card: SharedUserCardResponse) -> str:
     core = card.core_fields
     if core.company_name and core.company_name.strip():
         return core.company_name.strip()
@@ -76,9 +65,8 @@ def build_share_page_context(
         "request": request,
         "card": card,
         "display_mode": display_mode,
-        "palette": palette_for_token(token),
-        "brand": brand_label(card),
-        "contact_detail": primary_contact_detail(card),
+        "palette": design_for_id(card.design_id),
+        "company": company_label(card),
         "custom_fields": custom_fields,
         "photo_front_url": front_url,
         "photo_back_url": back_url,

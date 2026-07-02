@@ -65,14 +65,19 @@
     .wallet-card.classic {
       background: {{ palette.background }};
       color: {{ palette.text }};
+      border: 1px solid rgba(255, 255, 255, 0.35);
     }
 
-    .classic-wash {
+    .accent-orb {
       position: absolute;
-      inset: 0 auto 0 0;
-      width: 42%;
+      top: -36px;
+      right: -24px;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
       background: {{ palette.accent }};
-      opacity: 0.35;
+      opacity: 0.24;
+      pointer-events: none;
     }
 
     .classic-inner {
@@ -81,8 +86,8 @@
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      min-height: 196px;
-      padding: 22px 20px;
+      min-height: 176px;
+      padding: 18px 20px;
     }
 
     .classic-top {
@@ -92,22 +97,37 @@
       align-items: flex-start;
     }
 
-    .brand {
-      font-size: 1.35rem;
-      font-weight: 700;
+    .company {
+      flex: 1;
+      font-size: 1.5rem;
+      font-weight: 600;
+      font-style: italic;
       line-height: 1.15;
       word-break: break-word;
     }
 
-    .classic-bottom .label {
-      font-size: 0.82rem;
-      color: {{ palette.muted }};
-      margin-bottom: 4px;
+    .classic-bottom {
+      display: grid;
+      gap: 4px;
     }
 
-    .classic-bottom .value {
-      font-size: 1rem;
-      font-weight: 600;
+    .classic-bottom .person {
+      font-size: 1.05rem;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .classic-bottom .job-title {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: {{ palette.muted }};
+      word-break: break-word;
+    }
+
+    .classic-bottom .email {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: {{ palette.muted }};
       word-break: break-word;
     }
 
@@ -257,14 +277,19 @@
       </div>
       {% else %}
       <div class="wallet-card classic">
-        <div class="classic-wash"></div>
+        <div class="accent-orb"></div>
         <div class="classic-inner">
           <div class="classic-top">
-            <div class="brand">{{ brand }}</div>
+            <div class="company">{{ company }}</div>
           </div>
           <div class="classic-bottom">
-            <div class="label">{{ core_name }}</div>
-            <div class="value">{{ contact_detail }}</div>
+            <div class="person">{{ core_name }}</div>
+            {% if core_job_title %}
+            <div class="job-title">{{ core_job_title }}</div>
+            {% endif %}
+            {% if core_email %}
+            <div class="email">{{ core_email }}</div>
+            {% endif %}
           </div>
         </div>
       </div>
