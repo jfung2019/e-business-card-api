@@ -8,12 +8,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 if [[ ! -f .env ]]; then
-  echo "Missing .env in repo root. Copy deploy/.env.production.example to .env and edit it."
-  exit 1
-fi
-
-if [[ ! -f firebase-service-account.json ]]; then
-  echo "Missing firebase-service-account.json in repo root."
+  echo "Missing .env in repo root. Copy deploy/.env.dev.example or deploy/.env.production.example to .env and edit it."
   exit 1
 fi
 
@@ -22,6 +17,12 @@ set -a
 # Strip Windows CRLF if .env was uploaded from Windows
 source <(sed 's/\r$//' .env)
 set +a
+
+FIREBASE_CREDS="${FIREBASE_CREDENTIALS_PATH:-./firebase-service-account.json}"
+if [[ ! -f "$FIREBASE_CREDS" ]]; then
+  echo "Missing Firebase service account at $FIREBASE_CREDS (FIREBASE_CREDENTIALS_PATH in .env)."
+  exit 1
+fi
 
 if [[ -z "${MONGO_ROOT_USERNAME:-}" || -z "${MONGO_ROOT_PASSWORD:-}" ]]; then
   echo "Missing MONGO_ROOT_USERNAME or MONGO_ROOT_PASSWORD in .env"
