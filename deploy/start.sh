@@ -19,6 +19,10 @@ source <(sed 's/\r$//' .env)
 set +a
 
 FIREBASE_CREDS="${FIREBASE_CREDENTIALS_PATH:-./firebase-service-account.json}"
+# Compose resolves relative volume paths from deploy/, not repo root — use absolute path.
+if [[ "$FIREBASE_CREDS" != /* ]]; then
+  FIREBASE_CREDS="$ROOT_DIR/${FIREBASE_CREDS#./}"
+fi
 if [[ -d "$FIREBASE_CREDS" ]]; then
   echo "ERROR: $FIREBASE_CREDS is a directory (Docker often creates this when the JSON was missing)."
   echo "  rm -rf '$FIREBASE_CREDS' then re-upload the file via scp."
@@ -39,10 +43,11 @@ if ! docker info >/dev/null 2>&1; then
   DOCKER=(sudo docker)
 fi
 
-# Docker Compose reads --env-file literally; strip CRLF from Windows uploads.
+# Docker Compose reads --env-file literally; strip CRLF and use absolute Firebase path.
 ENV_FILE="$(mktemp)"
 trap 'rm -f "$ENV_FILE"' EXIT
-sed 's/\r$//' .env > "$ENV_FILE"
+sed 's/\r$//' .env | grep -v '^FIREBASE_CREDENTIALS_PATH=' > "$ENV_FILE"
+printf 'FIREBASE_CREDENTIALS_PATH=%s\n' "$FIREBASE_CREDS" >> "$ENV_FILE"
 
 "${DOCKER[@]}" compose \
   --project-directory "$ROOT_DIR" \
