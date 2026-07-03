@@ -19,6 +19,11 @@ source <(sed 's/\r$//' .env)
 set +a
 
 FIREBASE_CREDS="${FIREBASE_CREDENTIALS_PATH:-./firebase-service-account.json}"
+if [[ -d "$FIREBASE_CREDS" ]]; then
+  echo "ERROR: $FIREBASE_CREDS is a directory (Docker often creates this when the JSON was missing)."
+  echo "  rm -rf '$FIREBASE_CREDS' then re-upload the file via scp."
+  exit 1
+fi
 if [[ ! -f "$FIREBASE_CREDS" ]]; then
   echo "Missing Firebase service account at $FIREBASE_CREDS (FIREBASE_CREDENTIALS_PATH in .env)."
   exit 1
@@ -34,9 +39,14 @@ if ! docker info >/dev/null 2>&1; then
   DOCKER=(sudo docker)
 fi
 
+# Docker Compose reads --env-file literally; strip CRLF from Windows uploads.
+ENV_FILE="$(mktemp)"
+trap 'rm -f "$ENV_FILE"' EXIT
+sed 's/\r$//' .env > "$ENV_FILE"
+
 "${DOCKER[@]}" compose \
   --project-directory "$ROOT_DIR" \
-  --env-file "$ROOT_DIR/.env" \
+  --env-file "$ENV_FILE" \
   -f deploy/docker-compose.prod.yml \
   up -d --build
 
