@@ -20,10 +20,10 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-chat}
       OPENROUTER_TIMEOUT_SECONDS: ${OPENROUTER_TIMEOUT_SECONDS:-30}
       OPENROUTER_MAX_RETRIES: ${OPENROUTER_MAX_RETRIES:-2}
-      FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
+      FIREBASE_CREDENTIALS_PATH: /app/secrets/firebase-service-account.json
       SHARE_PUBLIC_BASE_URL: ${SHARE_PUBLIC_BASE_URL:-https://focms.megaannum.ai:8001/c}
     volumes:
-      - ${FIREBASE_CREDENTIALS_PATH:-./firebase-service-account.json}:/app/firebase-service-account.json:ro
+      - ${SECRETS_BIND_MOUNT}:/app/secrets:ro
     depends_on:
       mongodb:
         condition: service_healthy

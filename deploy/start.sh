@@ -38,22 +38,26 @@ if [[ -z "${MONGO_ROOT_USERNAME:-}" || -z "${MONGO_ROOT_PASSWORD:-}" ]]; then
   exit 1
 fi
 
+SECRETS_DIR="$ROOT_DIR/secrets"
+mkdir -p "$SECRETS_DIR"
+cp "$FIREBASE_CREDS" "$SECRETS_DIR/firebase-service-account.json"
+
 DOCKER=(docker)
 if ! docker info >/dev/null 2>&1; then
   DOCKER=(sudo docker)
 fi
 
-# Docker Compose reads --env-file literally; strip CRLF and use absolute Firebase path.
+# Docker Compose reads --env-file literally; strip CRLF and pass secrets dir (absolute path).
 ENV_FILE="$(mktemp)"
 trap 'rm -f "$ENV_FILE"' EXIT
-sed 's/\r$//' .env | grep -v '^FIREBASE_CREDENTIALS_PATH=' > "$ENV_FILE"
-printf 'FIREBASE_CREDENTIALS_PATH=%s\n' "$FIREBASE_CREDS" >> "$ENV_FILE"
+sed 's/\r$//' .env | grep -v '^SECRETS_BIND_MOUNT=' > "$ENV_FILE"
+printf 'SECRETS_BIND_MOUNT=%s\n' "$SECRETS_DIR" >> "$ENV_FILE"
 
 "${DOCKER[@]}" compose \
   --project-directory "$ROOT_DIR" \
   --env-file "$ENV_FILE" \
   -f deploy/docker-compose.prod.yml \
-  up -d --build
+  up -d --build --force-recreate
 
 echo ""
 echo "Repo: $ROOT_DIR"
