@@ -32,9 +32,13 @@ async def get_current_user_id(
         decoded = firebase_auth.verify_id_token(token)
     except Exception as exc:
         logger.warning("Firebase token verification failed: %s", exc)
+        detail = "Invalid or expired token."
+        exc_text = str(exc).lower()
+        if "aud" in exc_text or "audience" in exc_text:
+            detail = "Firebase project mismatch between app token and API server."
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token.",
+            detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 

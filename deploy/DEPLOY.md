@@ -15,13 +15,26 @@ Mobile app production URL: `https://focms.megaannum.ai:8001`
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.prod.yml` | API + MongoDB containers |
-| `start.sh` | Build and start containers |
+| `docker-compose.dev.yml` | Dev server — bridge networking (`focms.megaannum.ai:8001`) |
+| `docker-compose.prod.yml` | Prod server — host networking (`ebc.megaannum.ai`; fixes broken Docker DNS) |
+| `start.sh` | Build and start containers (`DEPLOY_ENV` in `.env`, or `--dev` / `--prod`) |
 | `nginx/focms-ebc-8001.conf` | nginx SSL on port 8001 |
-| `.env.production.example` | Template for server `.env` |
+| `.env.dev.example` | Template for **dev** server `.env` (`DEPLOY_ENV=dev`) |
+| `.env.production.example` | Template for **prod** server `.env` (`DEPLOY_ENV=prod`) |
 | `setup-server.sh` | One-time Docker/nginx install (skip if CMS server already set up) |
 
-**Not in git (upload separately):** `.env`, `firebase-service-account.json` in repo root.
+**Not in git (upload separately):** `.env`, Firebase service account JSON in repo root.
+
+### Dev vs prod
+
+| | Dev (`DEPLOY_ENV=dev`) | Prod (`DEPLOY_ENV=prod`) |
+|---|------------------------|--------------------------|
+| Compose | `docker-compose.dev.yml` | `docker-compose.prod.yml` |
+| API networking | Docker bridge | Host network (DNS workaround) |
+| Public URL | `https://focms.megaannum.ai:8001` | `https://ebc.megaannum.ai` |
+| Firebase JSON | `firebase-service-account-dev.json` | `firebase-service-account.json` |
+
+Add `DEPLOY_ENV=dev` or `DEPLOY_ENV=prod` to each server's `.env`, or pass `bash deploy/start.sh --dev` / `--prod`.
 
 ---
 
@@ -105,8 +118,8 @@ bash deploy/start.sh
 | Task | Command |
 |------|---------|
 | API logs | `docker logs -f ebc-api` |
-| Restart | `docker compose -f deploy/docker-compose.prod.yml restart` |
-| Stop | `docker compose -f deploy/docker-compose.prod.yml down` |
+| Restart | `bash deploy/start.sh` (uses `DEPLOY_ENV` from `.env`) |
+| Stop | `docker compose -f deploy/docker-compose.dev.yml down` or `...prod.yml` |
 | Renew SSL | `sudo certbot renew --dry-run` |
 
 ## Connect to MongoDB (MongoDB Compass, from your PC)
@@ -150,3 +163,4 @@ Do **not** open port 27017 in the Alibaba cloud firewall — SSH tunnel is enoug
 | Missing secrets | Ensure `.env` and `firebase-service-account.json` in repo root |
 | **413** on card scan (front + back) | nginx default upload limit is 1 MB. After `git pull`, copy `deploy/nginx/focms-ebc-8001.conf` and `sudo nginx -t && sudo systemctl reload nginx` (`client_max_body_size 25m`) |
 | App shows **Parsing service is busy** | Upload reached the API but OpenRouter parsing failed. Run `git pull && bash deploy/start.sh` (rebuilds the API container). Check `docker logs --tail 100 ebc-api` for `OpenRouter error` lines. |
+| App **Invalid or expired token** (Firebase creds OK) | Container cannot reach `www.googleapis.com` (Docker bridge DNS broken on some Alibaba VPS). Prod compose uses **host networking** for the API so it shares the host resolver. Redeploy: `git pull && bash deploy/start.sh`. Verify: `docker exec ebc-api python -c "import socket; print(socket.getaddrinfo('www.googleapis.com',443)[0][4][0])"` |
