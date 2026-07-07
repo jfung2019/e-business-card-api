@@ -22,6 +22,22 @@ _OPTIONAL_CORE_FIELD_KEYS = frozenset(
 )
 _EMAIL_ADAPTER = TypeAdapter(EmailStr)
 
+# Maps common LLM key variants to canonical snake_case + lang suffix keys.
+_CUSTOM_FIELD_KEY_ALIASES: dict[str, str] = {
+    "address (english)": "address_en",
+    "address english": "address_en",
+    "address (chinese)": "address_ch",
+    "address chinese": "address_ch",
+    "address_zh": "address_ch",
+    "alternate name (chinese)": "alternate_name_ch",
+    "alternate name (english)": "alternate_name_en",
+    "alternate_name_zh": "alternate_name_ch",
+    "phone 2": "phone_2",
+    "phone2": "phone_2",
+}
+
+_LANG_SUFFIX_ALIASES = {"zh": "ch"}
+
 SYSTEM_PROMPT = """You extract structured contact data from raw OCR text of physical business cards.
 
 OCR text may include a back-of-card section after a line containing only `--- BACK ---`. Treat both sides as one contact; prefer the clearest value when fields repeat.
@@ -45,6 +61,9 @@ Rules:
 - Put standard fields in core_fields (including job_title for role/position). Put everything else (fax, address, social handles, etc.) in custom_fields.
 - name is required. Use null for unknown core_fields values, not empty strings.
 - custom_fields values must be strings. Omit empty custom_fields entries.
+- Use snake_case keys in custom_fields. For localized variants of the same field, use `{field}_{lang}` where lang is a short code: en (English), ch (Chinese), ja (Japanese), ko (Korean), fr (French), etc. Examples: address_en, address_ch, alternate_name_ch, fax_en. Do not use human-readable labels like "Address (English)" as keys.
+- When both English and Chinese addresses appear on a card, store them as address_en and address_ch (not address_zh).
+- Always capture every address line present in the OCR text. If Chinese address characters (e.g. 香港, 道, 室) appear anywhere—including after `--- BACK ---`—put the full Chinese address in address_ch. Do not drop or summarize away Chinese address lines.
 - Do not wrap the JSON in markdown. Do not add commentary or extra keys.
 """
 
@@ -220,6 +239,30 @@ class OpenRouterService:
         return text or None
 
     @classmethod
+    def _normalize_custom_field_key(cls, key: str) -> str:
+        trimmed = key.strip()
+        if not trimmed:
+            return trimmed
+
+        alias = _CUSTOM_FIELD_KEY_ALIASES.get(trimmed.lower())
+        if alias:
+            return alias
+
+        normalized = trimmed.lower().replace(" ", "_")
+        alias = _CUSTOM_FIELD_KEY_ALIASES.get(normalized.replace("_", " "))
+        if alias:
+            return alias
+
+        parts = normalized.split("_")
+        if len(parts) >= 2:
+            lang = parts[-1]
+            if lang in _LANG_SUFFIX_ALIASES:
+                parts[-1] = _LANG_SUFFIX_ALIASES[lang]
+                return "_".join(parts)
+
+        return normalized if normalized == trimmed.lower() else trimmed
+
+    @classmethod
     def _coerce_email(cls, value: Any) -> str | None:
         text = cls._coerce_optional_text(value)
         if text is None:
@@ -241,7 +284,8 @@ class OpenRouterService:
             for key, raw in custom_raw.items():
                 text = cls._coerce_optional_text(raw)
                 if text:
-                    custom[str(key).strip()] = text
+                    canonical_key = cls._normalize_custom_field_key(str(key))
+                    custom[canonical_key] = text
 
         core: dict[str, Any] = {}
         for key, value in core_raw.items():
@@ -251,7 +295,8 @@ class OpenRouterService:
             else:
                 text = cls._coerce_optional_text(value)
                 if text:
-                    custom[key_str] = text
+                    canonical_key = cls._normalize_custom_field_key(key_str)
+                    custom[canonical_key] = text
 
         for optional_key in _OPTIONAL_CORE_FIELD_KEYS:
             if optional_key not in core:

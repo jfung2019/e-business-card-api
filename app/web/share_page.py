@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.core.config import Settings
 from app.models.share_link import SharedUserCardResponse
+from app.utils.custom_fields import format_custom_field_label
 from app.web.card_designs import design_for_id
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
@@ -56,7 +57,7 @@ def build_share_page_context(
     core = card.core_fields
 
     custom_fields = [
-        (key, value)
+        (format_custom_field_label(key), value)
         for key, value in sorted(card.custom_fields.items(), key=lambda item: item[0].lower())
         if value.strip()
     ]
