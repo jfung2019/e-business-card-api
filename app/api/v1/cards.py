@@ -1,5 +1,6 @@
 import base64
 import binascii
+import json
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -17,7 +18,7 @@ from app.core.exceptions import (
 from app.db.mongodb import get_cards_collection_dependency, get_scan_image_service_dependency
 from app.api.v1.share_links import get_share_link_service
 from app.models.card import CapturedCardResponse, PhotoFace
-from app.models.requests import UpdateWalletDisplayRequest
+from app.models.requests import ApplyEnhancementRequest, UpdateWalletDisplayRequest
 from app.services.card_service import CardService
 from app.services.scan_image_service import ScanImageService
 from app.services.share_link_service import (
@@ -195,6 +196,157 @@ async def process_card(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to save captured card.",
         ) from exc
+
+
+@router.post(
+    "/offline-draft",
+    response_model=CapturedCardResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save an offline OCR draft for later LLM enhancement",
+)
+async def save_offline_draft(
+    raw_ocr_text: str = Form(..., min_length=1),
+    core_fields_json: str = Form(...),
+    custom_fields_json: str = Form("{}"),
+    edited_fields_json: str = Form("[]"),
+    scan_image: UploadFile | None = File(None),
+    scan_image_base64: str | None = Form(None),
+    scan_image_back: UploadFile | None = File(None),
+    scan_image_back_base64: str | None = Form(None),
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> CapturedCardResponse:
+    try:
+        core_fields = json.loads(core_fields_json)
+        custom_fields = json.loads(custom_fields_json)
+        edited_fields = json.loads(edited_fields_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON in offline draft fields.",
+        ) from exc
+
+    scan_image_bytes: bytes | None = None
+    scan_image_content_type = "image/jpeg"
+    scan_image_back_bytes: bytes | None = None
+    scan_image_back_content_type = "image/jpeg"
+
+    if scan_image_base64:
+        payload = scan_image_base64.strip()
+        if payload.startswith("data:") and "," in payload:
+            payload = payload.split(",", 1)[1]
+        try:
+            scan_image_bytes = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="scan_image_base64 is not valid base64.",
+            ) from exc
+
+    if scan_image is not None and scan_image.filename and scan_image_bytes is None:
+        scan_image_bytes = await scan_image.read()
+        if scan_image_bytes:
+            declared_type = (scan_image.content_type or "image/jpeg").split(";")[0].strip().lower()
+            if declared_type not in ALLOWED_SCAN_IMAGE_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail="Scan image must be JPEG, PNG, or WebP.",
+                )
+            scan_image_content_type = declared_type
+
+    if scan_image_back_base64:
+        payload = scan_image_back_base64.strip()
+        if payload.startswith("data:") and "," in payload:
+            payload = payload.split(",", 1)[1]
+        try:
+            scan_image_back_bytes = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="scan_image_back_base64 is not valid base64.",
+            ) from exc
+
+    if scan_image_back is not None and scan_image_back.filename and scan_image_back_bytes is None:
+        scan_image_back_bytes = await scan_image_back.read()
+        if scan_image_back_bytes:
+            declared_type = (scan_image_back.content_type or "image/jpeg").split(";")[0].strip().lower()
+            if declared_type not in ALLOWED_SCAN_IMAGE_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail="Back scan image must be JPEG, PNG, or WebP.",
+                )
+            scan_image_back_content_type = declared_type
+
+    try:
+        return await card_service.save_offline_draft(
+            owner_user_id=owner_user_id,
+            raw_ocr_text=raw_ocr_text,
+            core_fields=core_fields,
+            custom_fields=custom_fields,
+            edited_fields=edited_fields if isinstance(edited_fields, list) else [],
+            scan_image_bytes=scan_image_bytes,
+            scan_image_content_type=scan_image_content_type,
+            scan_image_back_bytes=scan_image_back_bytes,
+            scan_image_back_content_type=scan_image_back_content_type,
+        )
+    except CardPersistenceError as exc:
+        logger.error("Failed to save offline draft: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{card_id}/enhance",
+    response_model=CapturedCardResponse,
+    summary="Run LLM enhancement for an offline draft and produce review suggestions",
+)
+async def enhance_card(
+    card_id: str,
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> CapturedCardResponse:
+    try:
+        return await card_service.enhance_card(card_id, owner_user_id)
+    except CardNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.") from exc
+    except OpenRouterTimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="LLM parsing service timed out. Please try again.",
+        ) from exc
+    except OpenRouterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM parsing service is unavailable.",
+        ) from exc
+    except CardPersistenceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{card_id}/enhancement/apply",
+    response_model=CapturedCardResponse,
+    summary="Apply accepted LLM enhancement suggestions to a card",
+)
+async def apply_card_enhancement(
+    card_id: str,
+    payload: ApplyEnhancementRequest,
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> CapturedCardResponse:
+    try:
+        return await card_service.apply_enhancement(
+            card_id,
+            owner_user_id,
+            accept_all=payload.accept_all,
+            accepted_fields=payload.accepted_fields,
+        )
+    except CardNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.") from exc
+    except CardPersistenceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.patch(

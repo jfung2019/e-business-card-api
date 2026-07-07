@@ -7,8 +7,14 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 from pydantic import ValidationError
 from pymongo.errors import PyMongoError
 
-from app.core.exceptions import CardNotFoundError, CardPersistenceError, ScanImageNotFoundError
-from app.models.card import CapturedCardDocument, CapturedCardResponse, PhotoFace, WalletDisplay
+from app.core.exceptions import (
+    CardNotFoundError,
+    CardPersistenceError,
+    OpenRouterError,
+    OpenRouterTimeoutError,
+    ScanImageNotFoundError,
+)
+from app.models.card import CapturedCardBase, CapturedCardDocument, CapturedCardResponse, PhotoFace, WalletDisplay
 from app.services.openrouter import OpenRouterService
 from app.services.scan_image_service import ScanImageService
 
@@ -40,8 +46,13 @@ class CardService:
         document = CapturedCardDocument(
             owner_user_id=owner_user_id,
             scanned_at=datetime.now(UTC),
+            raw_ocr_text=raw_ocr_text.strip(),
             core_fields=parsed.core_fields,
             custom_fields=parsed.custom_fields,
+            parse_status="parsed",
+            parse_source="llm",
+            enhancement_status="none",
+            parsed_at=datetime.now(UTC),
         )
 
         try:
@@ -108,6 +119,222 @@ class CardService:
             }
         )
 
+    async def save_offline_draft(
+        self,
+        owner_user_id: str,
+        raw_ocr_text: str,
+        core_fields: dict,
+        custom_fields: dict,
+        edited_fields: list[str] | None = None,
+        scan_image_bytes: bytes | None = None,
+        scan_image_content_type: str = "image/jpeg",
+        scan_image_back_bytes: bytes | None = None,
+        scan_image_back_content_type: str = "image/jpeg",
+    ) -> CapturedCardResponse:
+        document = CapturedCardDocument(
+            owner_user_id=owner_user_id,
+            scanned_at=datetime.now(UTC),
+            raw_ocr_text=raw_ocr_text.strip(),
+            core_fields=core_fields,
+            custom_fields=custom_fields,
+            edited_fields=edited_fields or [],
+            parse_status="fallback",
+            parse_source="offline",
+            enhancement_status="queued",
+            parsed_at=datetime.now(UTC),
+        )
+
+        try:
+            validated_payload = document.model_dump(mode="python")
+            insert_result = await self._collection.insert_one(validated_payload)
+        except ValidationError as exc:
+            logger.exception("Offline draft failed Pydantic validation before persistence")
+            raise CardPersistenceError("Card document failed validation") from exc
+        except PyMongoError as exc:
+            logger.exception("MongoDB insert failed for offline draft")
+            raise CardPersistenceError("Failed to persist offline draft") from exc
+
+        card_id = str(insert_result.inserted_id)
+        scan_image_id: str | None = None
+        scan_image_front_id: str | None = None
+        scan_image_back_id: str | None = None
+        wallet_display: WalletDisplay = "classic"
+        photo_face: PhotoFace = "front"
+
+        if scan_image_bytes:
+            if self._scan_images is None:
+                raise CardPersistenceError("Scan image storage is not configured")
+            scan_image_front_id = await self._scan_images.save(
+                owner_user_id=owner_user_id,
+                card_id=card_id,
+                data=scan_image_bytes,
+                content_type=scan_image_content_type,
+            )
+            scan_image_id = scan_image_front_id
+            if scan_image_back_bytes:
+                scan_image_back_id = await self._scan_images.save(
+                    owner_user_id=owner_user_id,
+                    card_id=card_id,
+                    data=scan_image_back_bytes,
+                    content_type=scan_image_back_content_type,
+                )
+            wallet_display = "photo"
+            try:
+                await self._collection.update_one(
+                    {"_id": insert_result.inserted_id},
+                    {
+                        "$set": {
+                            "scan_image_id": scan_image_id,
+                            "scan_image_front_id": scan_image_front_id,
+                            "scan_image_back_id": scan_image_back_id,
+                            "wallet_display": wallet_display,
+                            "photo_face": photo_face,
+                        }
+                    },
+                )
+            except PyMongoError as exc:
+                logger.exception("Failed to link scan image to offline draft %s", card_id)
+                raise CardPersistenceError("Failed to persist offline draft") from exc
+
+        return self._to_response(
+            {
+                **validated_payload,
+                "_id": insert_result.inserted_id,
+                "scan_image_id": scan_image_id,
+                "scan_image_front_id": scan_image_front_id,
+                "scan_image_back_id": scan_image_back_id,
+                "wallet_display": wallet_display,
+                "photo_face": photo_face,
+            }
+        )
+
+    async def enhance_card(self, card_id: str, owner_user_id: str) -> CapturedCardResponse:
+        document = await self._get_owned_card_document(card_id, owner_user_id)
+        raw_ocr_text = document.get("raw_ocr_text")
+        if not raw_ocr_text or not str(raw_ocr_text).strip():
+            raise CardPersistenceError("Card has no OCR text available for enhancement")
+
+        try:
+            await self._collection.update_one(
+                {"_id": document["_id"]},
+                {"$set": {"enhancement_status": "processing", "parse_error": None}},
+            )
+        except PyMongoError as exc:
+            logger.exception("Failed to mark card %s as processing", card_id)
+            raise CardPersistenceError("Failed to start enhancement") from exc
+
+        try:
+            parsed = await self._openrouter.parse_ocr_text(str(raw_ocr_text))
+            suggestions = CardService._build_enhancement_suggestions(
+                current_core=document.get("core_fields", {}),
+                current_custom=document.get("custom_fields", {}),
+                parsed=parsed,
+                edited_fields=set(document.get("edited_fields", [])),
+            )
+            next_status = "pending_review" if suggestions else "applied"
+            update_fields: dict = {
+                "enhanced_suggestions": suggestions,
+                "enhancement_status": next_status,
+                "parse_error": None,
+            }
+            if not suggestions:
+                update_fields["parse_status"] = "parsed"
+                update_fields["parse_source"] = "llm"
+                update_fields["parsed_at"] = datetime.now(UTC)
+
+            await self._collection.update_one(
+                {"_id": document["_id"]},
+                {"$set": update_fields},
+            )
+        except (OpenRouterError, OpenRouterTimeoutError) as exc:
+            await self._collection.update_one(
+                {"_id": document["_id"]},
+                {
+                    "$set": {
+                        "enhancement_status": "failed",
+                        "parse_error": str(exc),
+                    }
+                },
+            )
+            raise
+        except PyMongoError as exc:
+            logger.exception("Failed to persist enhancement for card %s", card_id)
+            raise CardPersistenceError("Failed to persist enhancement") from exc
+
+        updated = await self._get_owned_card_document(card_id, owner_user_id)
+        return self._to_response(updated)
+
+    async def apply_enhancement(
+        self,
+        card_id: str,
+        owner_user_id: str,
+        *,
+        accept_all: bool,
+        accepted_fields: list[str],
+    ) -> CapturedCardResponse:
+        document = await self._get_owned_card_document(card_id, owner_user_id)
+        suggestions: dict[str, str] = document.get("enhanced_suggestions", {})
+        if not suggestions:
+            raise CardPersistenceError("No enhancement suggestions are available")
+
+        accepted = set(suggestions.keys()) if accept_all else set(accepted_fields)
+        core_fields = dict(document.get("core_fields", {}))
+        custom_fields = dict(document.get("custom_fields", {}))
+
+        for field_key, value in suggestions.items():
+            if field_key not in accepted:
+                continue
+            if field_key.startswith("core."):
+                core_key = field_key.removeprefix("core.")
+                core_fields[core_key] = value
+            elif field_key.startswith("custom."):
+                custom_key = field_key.removeprefix("custom.")
+                custom_fields[custom_key] = value
+
+        try:
+            validated = CapturedCardDocument(
+                owner_user_id=document["owner_user_id"],
+                scanned_at=document["scanned_at"],
+                raw_ocr_text=document.get("raw_ocr_text"),
+                core_fields=core_fields,
+                custom_fields=custom_fields,
+                edited_fields=document.get("edited_fields", []),
+                parse_status="parsed",
+                parse_source="llm",
+                enhancement_status="applied",
+                enhanced_suggestions={},
+                parse_error=None,
+                parsed_at=datetime.now(UTC),
+                scan_image_id=document.get("scan_image_id"),
+                scan_image_front_id=document.get("scan_image_front_id"),
+                scan_image_back_id=document.get("scan_image_back_id"),
+                wallet_display=document.get("wallet_display"),
+                photo_face=document.get("photo_face"),
+            )
+            await self._collection.update_one(
+                {"_id": document["_id"]},
+                {
+                    "$set": {
+                        "core_fields": validated.core_fields.model_dump(mode="python"),
+                        "custom_fields": validated.custom_fields,
+                        "parse_status": "parsed",
+                        "parse_source": "llm",
+                        "enhancement_status": "applied",
+                        "enhanced_suggestions": {},
+                        "parse_error": None,
+                        "parsed_at": validated.parsed_at,
+                    }
+                },
+            )
+        except ValidationError as exc:
+            raise CardPersistenceError("Applied enhancement failed validation") from exc
+        except PyMongoError as exc:
+            logger.exception("Failed to apply enhancement for card %s", card_id)
+            raise CardPersistenceError("Failed to apply enhancement") from exc
+
+        updated = await self._get_owned_card_document(card_id, owner_user_id)
+        return self._to_response(updated)
+
     async def import_from_user_card(
         self,
         owner_user_id: str,
@@ -124,6 +351,10 @@ class CardService:
             scanned_at=datetime.now(UTC),
             core_fields=core_fields,
             custom_fields=custom_fields,
+            parse_status="parsed",
+            parse_source="manual",
+            enhancement_status="none",
+            parsed_at=datetime.now(UTC),
         )
 
         try:
@@ -365,6 +596,39 @@ class CardService:
         return "front"
 
     @staticmethod
+    def _build_enhancement_suggestions(
+        *,
+        current_core: dict,
+        current_custom: dict,
+        parsed: CapturedCardBase,
+        edited_fields: set[str],
+    ) -> dict[str, str]:
+        suggestions: dict[str, str] = {}
+        parsed_core = parsed.core_fields.model_dump(mode="python")
+
+        for key, value in parsed_core.items():
+            field_key = f"core.{key}"
+            if field_key in edited_fields:
+                continue
+            if value is None or not str(value).strip():
+                continue
+            current_value = current_core.get(key)
+            if str(value).strip() != str(current_value or "").strip():
+                suggestions[field_key] = str(value).strip()
+
+        for key, value in parsed.custom_fields.items():
+            field_key = f"custom.{key}"
+            if field_key in edited_fields:
+                continue
+            if not str(value).strip():
+                continue
+            current_value = current_custom.get(key)
+            if str(value).strip() != str(current_value or "").strip():
+                suggestions[field_key] = str(value).strip()
+
+        return suggestions
+
+    @staticmethod
     def _to_response(document: dict) -> CapturedCardResponse:
         card_id = str(document["_id"])
         scan_image_front_id = CardService._scan_front_image_id(document)
@@ -380,4 +644,10 @@ class CardService:
             scan_image_back_url=CardService._scan_back_image_url(card_id, scan_image_back_id),
             wallet_display=CardService._resolve_wallet_display(document, scan_image_front_id),
             photo_face=CardService._resolve_photo_face(document),
+            parse_status=document.get("parse_status", "parsed"),
+            parse_source=document.get("parse_source", "llm"),
+            enhancement_status=document.get("enhancement_status", "none"),
+            enhanced_suggestions=document.get("enhanced_suggestions", {}),
+            parse_error=document.get("parse_error"),
+            parsed_at=document.get("parsed_at"),
         )

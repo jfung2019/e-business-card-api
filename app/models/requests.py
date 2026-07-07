@@ -10,3 +10,8 @@ class ProcessCardRequest(BaseModel):
 class UpdateWalletDisplayRequest(BaseModel):
     wallet_display: WalletDisplay | None = None
     photo_face: PhotoFace | None = None
+
+
+class ApplyEnhancementRequest(BaseModel):
+    accept_all: bool = False
+    accepted_fields: list[str] = Field(default_factory=list)
