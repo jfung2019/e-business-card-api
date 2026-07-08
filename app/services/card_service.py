@@ -271,6 +271,7 @@ class CardService:
         *,
         accept_all: bool,
         accepted_fields: list[str],
+        accepted_overrides: dict[str, str],
     ) -> CapturedCardResponse:
         document = await self._get_owned_card_document(card_id, owner_user_id)
         suggestions: dict[str, str] = document.get("enhanced_suggestions", {})
@@ -284,12 +285,13 @@ class CardService:
         for field_key, value in suggestions.items():
             if field_key not in accepted:
                 continue
+            next_value = accepted_overrides.get(field_key, value)
             if field_key.startswith("core."):
                 core_key = field_key.removeprefix("core.")
-                core_fields[core_key] = value
+                core_fields[core_key] = next_value
             elif field_key.startswith("custom."):
                 custom_key = field_key.removeprefix("custom.")
-                custom_fields[custom_key] = value
+                custom_fields[custom_key] = next_value
 
         try:
             validated = CapturedCardDocument(

@@ -342,6 +342,7 @@ async def apply_card_enhancement(
             owner_user_id,
             accept_all=payload.accept_all,
             accepted_fields=payload.accepted_fields,
+            accepted_overrides=payload.accepted_overrides,
         )
     except CardNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.") from exc

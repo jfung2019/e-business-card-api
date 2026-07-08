@@ -15,3 +15,4 @@ class UpdateWalletDisplayRequest(BaseModel):
 class ApplyEnhancementRequest(BaseModel):
     accept_all: bool = False
     accepted_fields: list[str] = Field(default_factory=list)
+    accepted_overrides: dict[str, str] = Field(default_factory=dict)
