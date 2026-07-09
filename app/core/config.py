@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     mongo_cards_collection: str = "captured_cards"
     mongo_user_cards_collection: str = "user_cards"
     mongo_share_links_collection: str = "share_links"
+    mongo_llm_rate_limits_collection: str = "llm_rate_limits"
 
     share_public_base_url: str = "https://focms.megaannum.ai:8001/c"
 
@@ -27,6 +28,15 @@ class Settings(BaseSettings):
     openrouter_model: str = "google/gemini-2.5-flash"
     openrouter_timeout_seconds: float = 30.0
     openrouter_max_retries: int = 2
+    openrouter_max_tokens: int = 2048
+
+    ocr_text_max_length: int = 1500
+    ocr_text_max_lines: int = 35
+    llm_max_custom_fields: int = 30
+    llm_max_field_value_length: int = 500
+
+    llm_rate_limit_per_hour: int = 50
+    llm_rate_limit_per_day: int = 100
 
     firebase_credentials_path: str = ""
 

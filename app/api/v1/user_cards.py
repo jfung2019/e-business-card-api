@@ -10,15 +10,17 @@ from app.core.auth import get_current_user_id
 from app.core.exceptions import (
     CardPersistenceError,
     OpenRouterError,
+    OpenRouterSafetyError,
     OpenRouterTimeoutError,
     ScanImageNotFoundError,
 )
+from app.core.llm_deps import enforce_llm_rate_limit
 from app.db.mongodb import (
     get_scan_image_service_dependency,
     get_user_cards_collection_dependency,
 )
 from app.models.card import PhotoFace
-from app.models.requests import UpdateWalletDisplayRequest
+from app.models.requests import OCR_TEXT_MAX_LENGTH, UpdateWalletDisplayRequest
 from app.models.user_card import (
     ParsedUserCardPreview,
     ParseUserCardRequest,
@@ -112,7 +114,7 @@ async def reorder_user_cards(
 )
 async def parse_user_card(
     payload: ParseUserCardRequest,
-    _: str = Depends(get_current_user_id),
+    _: str = Depends(enforce_llm_rate_limit),
     user_card_service: UserCardService = Depends(get_user_card_service),
 ) -> ParsedUserCardPreview:
     try:
@@ -121,6 +123,12 @@ async def parse_user_card(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LLM parsing service timed out. Please try again.",
+        ) from exc
+    except OpenRouterSafetyError as exc:
+        logger.warning("OCR safety validation failed while parsing user card: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OCR text is not valid for card parsing.",
         ) from exc
     except OpenRouterError as exc:
         logger.error("OpenRouter error while parsing user card: %s", exc)
@@ -137,14 +145,14 @@ async def parse_user_card(
     summary="Parse OCR text and create a user business card with optional scan image",
 )
 async def process_user_card(
-    raw_ocr_text: str = Form(..., min_length=1),
+    raw_ocr_text: str = Form(..., min_length=1, max_length=OCR_TEXT_MAX_LENGTH),
     scan_image: UploadFile | None = File(None),
     scan_image_base64: str | None = Form(None),
     scan_image_back: UploadFile | None = File(None),
     scan_image_back_base64: str | None = Form(None),
     design_id: str = Form("classic"),
     is_primary: bool = Form(False),
-    owner_user_id: str = Depends(get_current_user_id),
+    owner_user_id: str = Depends(enforce_llm_rate_limit),
     user_card_service: UserCardService = Depends(get_user_card_service),
 ) -> UserCardResponse:
     scan_image_bytes: bytes | None = None
@@ -225,6 +233,12 @@ async def process_user_card(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LLM parsing service timed out. Please try again.",
+        ) from exc
+    except OpenRouterSafetyError as exc:
+        logger.warning("OCR safety validation failed while processing user card: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OCR text is not valid for card parsing.",
         ) from exc
     except OpenRouterError as exc:
         logger.error("OpenRouter error while processing user card: %s", exc)

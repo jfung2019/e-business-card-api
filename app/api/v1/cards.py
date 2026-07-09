@@ -12,14 +12,23 @@ from app.core.exceptions import (
     CardNotFoundError,
     CardPersistenceError,
     OpenRouterError,
+    OpenRouterSafetyError,
     OpenRouterTimeoutError,
     ScanImageNotFoundError,
 )
+from app.core.config import get_settings
+from app.core.llm_deps import enforce_llm_rate_limit
 from app.db.mongodb import get_cards_collection_dependency, get_scan_image_service_dependency
 from app.api.v1.share_links import get_share_link_service
 from app.models.card import CapturedCardResponse, PhotoFace
-from app.models.requests import ApplyEnhancementRequest, CapturedCardUpdate, UpdateWalletDisplayRequest
+from app.models.requests import (
+    ApplyEnhancementRequest,
+    CapturedCardUpdate,
+    OCR_TEXT_MAX_LENGTH,
+    UpdateWalletDisplayRequest,
+)
 from app.services.card_service import CardService
+from app.services.llm_guardrails import validate_ocr_submission
 from app.services.scan_image_service import ScanImageService
 from app.services.share_link_service import (
     ShareLinkImportError,
@@ -98,14 +107,27 @@ async def import_card_from_share(
     summary="Parse OCR text and persist a captured business card",
 )
 async def process_card(
-    raw_ocr_text: str = Form(..., min_length=1),
+    raw_ocr_text: str = Form(..., min_length=1, max_length=OCR_TEXT_MAX_LENGTH),
     scan_image: UploadFile | None = File(None),
     scan_image_base64: str | None = Form(None),
     scan_image_back: UploadFile | None = File(None),
     scan_image_back_base64: str | None = Form(None),
-    owner_user_id: str = Depends(get_current_user_id),
+    owner_user_id: str = Depends(enforce_llm_rate_limit),
     card_service: CardService = Depends(get_card_service),
 ) -> CapturedCardResponse:
+    settings = get_settings()
+    try:
+        validate_ocr_submission(
+            raw_ocr_text,
+            max_length=settings.ocr_text_max_length,
+            max_lines=settings.ocr_text_max_lines,
+        )
+    except OpenRouterSafetyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OCR text is not valid for card parsing.",
+        ) from exc
+
     scan_image_bytes: bytes | None = None
     scan_image_content_type = "image/jpeg"
     scan_image_back_bytes: bytes | None = None
@@ -184,6 +206,12 @@ async def process_card(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LLM parsing service timed out. Please try again.",
         ) from exc
+    except OpenRouterSafetyError as exc:
+        logger.warning("OCR safety validation failed for user %s: %s", owner_user_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OCR text is not valid for card parsing.",
+        ) from exc
     except OpenRouterError as exc:
         logger.error("OpenRouter error while processing card: %s", exc)
         raise HTTPException(
@@ -205,7 +233,7 @@ async def process_card(
     summary="Save an offline OCR draft for later LLM enhancement",
 )
 async def save_offline_draft(
-    raw_ocr_text: str = Form(..., min_length=1),
+    raw_ocr_text: str = Form(..., min_length=1, max_length=OCR_TEXT_MAX_LENGTH),
     core_fields_json: str = Form(...),
     custom_fields_json: str = Form("{}"),
     edited_fields_json: str = Form("[]"),
@@ -224,6 +252,19 @@ async def save_offline_draft(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON in offline draft fields.",
+        ) from exc
+
+    settings = get_settings()
+    try:
+        validate_ocr_submission(
+            raw_ocr_text,
+            max_length=settings.ocr_text_max_length,
+            max_lines=settings.ocr_text_max_lines,
+        )
+    except OpenRouterSafetyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OCR text is not valid for card parsing.",
         ) from exc
 
     scan_image_bytes: bytes | None = None
@@ -304,7 +345,7 @@ async def save_offline_draft(
 )
 async def enhance_card(
     card_id: str,
-    owner_user_id: str = Depends(get_current_user_id),
+    owner_user_id: str = Depends(enforce_llm_rate_limit),
     card_service: CardService = Depends(get_card_service),
 ) -> CapturedCardResponse:
     try:
@@ -315,6 +356,12 @@ async def enhance_card(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="LLM parsing service timed out. Please try again.",
+        ) from exc
+    except OpenRouterSafetyError as exc:
+        logger.warning("OCR safety validation failed during enhancement for card %s: %s", card_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stored OCR text is not valid for card parsing.",
         ) from exc
     except OpenRouterError as exc:
         raise HTTPException(

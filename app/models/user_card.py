@@ -91,7 +91,7 @@ class ReorderUserCardsRequest(BaseModel):
 
 
 class ParseUserCardRequest(BaseModel):
-    raw_ocr_text: str = Field(..., min_length=1)
+    raw_ocr_text: str = Field(..., min_length=1, max_length=1500)
 
 
 class ParsedUserCardPreview(CapturedCardBase):

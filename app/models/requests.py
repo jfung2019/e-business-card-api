@@ -2,9 +2,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.card import CoreFields, PhotoFace, WalletDisplay
 
+OCR_TEXT_MAX_LENGTH = 1500
+OCR_TEXT_MAX_LINES = 35
+
 
 class ProcessCardRequest(BaseModel):
-    raw_ocr_text: str = Field(..., min_length=1, description="Raw OCR text from on-device extraction")
+    raw_ocr_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=OCR_TEXT_MAX_LENGTH,
+        description="Raw OCR text from on-device extraction",
+    )
 
 
 class UpdateWalletDisplayRequest(BaseModel):

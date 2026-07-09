@@ -43,6 +43,11 @@ def get_share_links_collection(settings: Settings | None = None) -> AsyncIOMotor
     return get_database(resolved)[resolved.mongo_share_links_collection]
 
 
+def get_llm_rate_limits_collection(settings: Settings | None = None) -> AsyncIOMotorCollection:
+    resolved = settings or get_settings()
+    return get_database(resolved)[resolved.mongo_llm_rate_limits_collection]
+
+
 async def get_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
     yield get_cards_collection()
 
@@ -53,6 +58,10 @@ async def get_user_cards_collection_dependency() -> AsyncGenerator[AsyncIOMotorC
 
 async def get_share_links_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
     yield get_share_links_collection()
+
+
+async def get_llm_rate_limits_collection_dependency() -> AsyncGenerator[AsyncIOMotorCollection, None]:
+    yield get_llm_rate_limits_collection()
 
 
 async def get_scan_image_service_dependency() -> AsyncGenerator[ScanImageService, None]:
