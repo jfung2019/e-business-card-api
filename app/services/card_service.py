@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime
 
 from bson import ObjectId
@@ -15,11 +16,14 @@ from app.core.exceptions import (
     ScanImageNotFoundError,
 )
 from app.models.card import CapturedCardBase, CapturedCardDocument, CapturedCardResponse, PhotoFace, WalletDisplay
+
 from app.models.requests import CapturedCardUpdate
 from app.services.openrouter import OpenRouterService
 from app.services.scan_image_service import ScanImageService
 
 logger = logging.getLogger(__name__)
+
+_OFFLINE_PREVIEW_CUSTOM_KEY = re.compile(r"^line_\d+$")
 
 
 class CardService:
@@ -239,6 +243,14 @@ class CardService:
                 "parse_error": None,
             }
             if not suggestions:
+                core_fields, custom_fields = CardService._merge_llm_parse_respecting_edits(
+                    current_core=document.get("core_fields", {}),
+                    current_custom=document.get("custom_fields", {}),
+                    parsed=parsed,
+                    edited_fields=set(document.get("edited_fields", [])),
+                )
+                update_fields["core_fields"] = core_fields
+                update_fields["custom_fields"] = custom_fields
                 update_fields["parse_status"] = "parsed"
                 update_fields["parse_source"] = "llm"
                 update_fields["parsed_at"] = datetime.now(UTC)
@@ -293,6 +305,12 @@ class CardService:
             elif field_key.startswith("custom."):
                 custom_key = field_key.removeprefix("custom.")
                 custom_fields[custom_key] = next_value
+
+        edited_fields = set(document.get("edited_fields", []))
+        custom_fields = CardService._strip_offline_preview_custom_fields(
+            custom_fields,
+            edited_fields,
+        )
 
         try:
             validated = CapturedCardDocument(
@@ -656,6 +674,69 @@ class CardService:
         if stored in ("front", "back"):
             return stored
         return "front"
+
+    @staticmethod
+    def _strip_offline_preview_custom_fields(
+        custom_fields: dict[str, str],
+        edited_fields: set[str],
+    ) -> dict[str, str]:
+        stripped = dict(custom_fields)
+        for key in list(stripped.keys()):
+            if _OFFLINE_PREVIEW_CUSTOM_KEY.match(key) and f"custom.{key}" not in edited_fields:
+                del stripped[key]
+        return stripped
+
+    @staticmethod
+    def _merge_llm_parse_respecting_edits(
+        *,
+        current_core: dict,
+        current_custom: dict,
+        parsed: CapturedCardBase,
+        edited_fields: set[str],
+    ) -> tuple[dict, dict]:
+        parsed_core = parsed.core_fields.model_dump(mode="python")
+        core_fields = dict(current_core)
+
+        for key, value in parsed_core.items():
+            field_key = f"core.{key}"
+            if field_key in edited_fields:
+                continue
+            if value is None or not str(value).strip():
+                core_fields[key] = None
+            else:
+                core_fields[key] = str(value).strip()
+
+        custom_fields: dict[str, str] = {}
+        for key, value in parsed.custom_fields.items():
+            field_key = f"custom.{key}"
+            if field_key in edited_fields:
+                continue
+            text = str(value).strip()
+            if text:
+                custom_fields[key] = text
+
+        for field_key in edited_fields:
+            if not field_key.startswith("custom."):
+                continue
+            custom_key = field_key.removeprefix("custom.")
+            current_value = current_custom.get(custom_key)
+            if current_value is not None and str(current_value).strip():
+                custom_fields[custom_key] = str(current_value).strip()
+            elif custom_key in custom_fields:
+                del custom_fields[custom_key]
+
+        for field_key in edited_fields:
+            if not field_key.startswith("core."):
+                continue
+            core_key = field_key.removeprefix("core.")
+            if core_key in current_core:
+                core_fields[core_key] = current_core[core_key]
+
+        custom_fields = CardService._strip_offline_preview_custom_fields(
+            custom_fields,
+            edited_fields,
+        )
+        return core_fields, custom_fields
 
     @staticmethod
     def _build_enhancement_suggestions(
