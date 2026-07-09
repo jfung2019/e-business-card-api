@@ -26,17 +26,19 @@ _EMAIL_ADAPTER = TypeAdapter(EmailStr)
 _CUSTOM_FIELD_KEY_ALIASES: dict[str, str] = {
     "address (english)": "address_en",
     "address english": "address_en",
-    "address (chinese)": "address_ch",
-    "address chinese": "address_ch",
-    "address_zh": "address_ch",
-    "alternate name (chinese)": "alternate_name_ch",
+    "address (chinese)": "address_cn",
+    "address chinese": "address_cn",
+    "address_zh": "address_cn",
+    "address_ch": "address_cn",
+    "alternate name (chinese)": "alternate_name_cn",
     "alternate name (english)": "alternate_name_en",
-    "alternate_name_zh": "alternate_name_ch",
+    "alternate_name_zh": "alternate_name_cn",
+    "alternate_name_ch": "alternate_name_cn",
     "phone 2": "phone_2",
     "phone2": "phone_2",
 }
 
-_LANG_SUFFIX_ALIASES = {"zh": "ch"}
+_LANG_SUFFIX_ALIASES = {"zh": "cn", "ch": "cn"}
 
 SYSTEM_PROMPT = """You extract structured contact data from raw OCR text of physical business cards.
 
@@ -61,9 +63,9 @@ Rules:
 - Put standard fields in core_fields (including job_title for role/position). Put everything else (fax, address, social handles, etc.) in custom_fields.
 - name is required. Use null for unknown core_fields values, not empty strings.
 - custom_fields values must be strings. Omit empty custom_fields entries.
-- Use snake_case keys in custom_fields. For localized variants of the same field, use `{field}_{lang}` where lang is a short code: en (English), ch (Chinese), ja (Japanese), ko (Korean), fr (French), etc. Examples: address_en, address_ch, alternate_name_ch, fax_en. Do not use human-readable labels like "Address (English)" as keys.
-- When both English and Chinese addresses appear on a card, store them as address_en and address_ch (not address_zh).
-- Always capture every address line present in the OCR text. If Chinese address characters (e.g. 香港, 道, 室) appear anywhere—including after `--- BACK ---`—put the full Chinese address in address_ch. Do not drop or summarize away Chinese address lines.
+- Use snake_case keys in custom_fields. For localized variants of the same field, use `{field}_{lang}` where lang is a short code: en (English), cn (Chinese), ja (Japanese), ko (Korean), fr (French), etc. Examples: address_en, address_cn, alternate_name_cn, fax_en. Do not use human-readable labels like "Address (English)" as keys.
+- When both English and Chinese addresses appear on a card, store them as address_en and address_cn (not address_ch or address_zh).
+- Always capture every address line present in the OCR text. If Chinese address characters (e.g. 香港, 道, 室) appear anywhere—including after `--- BACK ---`—put the full Chinese address in address_cn. Do not drop or summarize away Chinese address lines.
 - Do not wrap the JSON in markdown. Do not add commentary or extra keys.
 """
 

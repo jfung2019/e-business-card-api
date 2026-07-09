@@ -1,31 +1,39 @@
 import re
 
 _LANGUAGE_LABELS = {
-    "en": "English",
-    "ch": "Chinese",
-    "zh": "Chinese",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "fr": "French",
-    "de": "German",
-    "es": "Spanish",
+    "en": "en",
+    "cn": "cn",
+    "ch": "cn",
+    "zh": "cn",
+    "ja": "ja",
+    "ko": "ko",
+    "fr": "fr",
+    "de": "de",
+    "es": "es",
 }
 
 _EXACT_LABELS = {
-    "address_en": "Address (English)",
-    "address_ch": "Address (Chinese)",
-    "address_zh": "Address (Chinese)",
-    "alternate_name_en": "Alternate name (English)",
-    "alternate_name_ch": "Alternate name (Chinese)",
-    "alternate_name_zh": "Alternate name (Chinese)",
-    "phone_2": "Phone 2",
+    "phone_2": "phone 2",
+    "phone_3": "phone 3",
+}
+
+_KEY_ALIASES = {
+    "address_ch": "address_cn",
+    "address_zh": "address_cn",
 }
 
 _LOCALIZED_KEY_PATTERN = re.compile(r"^(.+)_([a-z]{2})$", re.IGNORECASE)
 
 
-def format_custom_field_label(key: str) -> str:
+def canonical_custom_field_key(key: str) -> str:
     trimmed = key.strip()
+    if not trimmed:
+        return trimmed
+    return _KEY_ALIASES.get(trimmed.lower(), trimmed)
+
+
+def format_custom_field_label(key: str) -> str:
+    trimmed = canonical_custom_field_key(key.strip())
     if not trimmed:
         return trimmed
 
@@ -36,12 +44,10 @@ def format_custom_field_label(key: str) -> str:
     match = _LOCALIZED_KEY_PATTERN.match(trimmed)
     if match:
         field, lang_code = match.groups()
-        field_label = field.replace("_", " ").title()
-        language_label = _LANGUAGE_LABELS.get(lang_code.lower())
-        if language_label:
-            return f"{field_label} ({language_label})"
+        lang = _LANGUAGE_LABELS.get(lang_code.lower(), lang_code.lower())
+        return f"{field.replace('_', ' ')} ({lang})"
 
     if "_" in trimmed:
-        return trimmed.replace("_", " ").title()
+        return trimmed.replace("_", " ")
 
     return trimmed
