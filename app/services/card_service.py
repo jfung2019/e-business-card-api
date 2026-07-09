@@ -15,6 +15,7 @@ from app.core.exceptions import (
     ScanImageNotFoundError,
 )
 from app.models.card import CapturedCardBase, CapturedCardDocument, CapturedCardResponse, PhotoFace, WalletDisplay
+from app.models.requests import CapturedCardUpdate
 from app.services.openrouter import OpenRouterService
 from app.services.scan_image_service import ScanImageService
 
@@ -481,6 +482,65 @@ class CardService:
             raise CardPersistenceError("Failed to update wallet display") from exc
 
         updated = {**document, "wallet_display": next_wallet_display, "photo_face": next_photo_face}
+        return self._to_response(updated)
+
+    async def update(
+        self,
+        card_id: str,
+        owner_user_id: str,
+        payload: CapturedCardUpdate,
+    ) -> CapturedCardResponse:
+        document = await self._get_owned_card_document(card_id, owner_user_id)
+        payload_data = payload.model_dump(exclude_unset=True)
+
+        core_fields = dict(document.get("core_fields", {}))
+        if payload_data.get("core_fields") is not None:
+            core_fields = payload_data["core_fields"]
+
+        custom_fields = dict(document.get("custom_fields", {}))
+        if payload_data.get("custom_fields") is not None:
+            custom_fields = payload_data["custom_fields"]
+
+        try:
+            validated = CapturedCardDocument(
+                owner_user_id=document["owner_user_id"],
+                scanned_at=document["scanned_at"],
+                raw_ocr_text=document.get("raw_ocr_text"),
+                core_fields=core_fields,
+                custom_fields=custom_fields,
+                edited_fields=document.get("edited_fields", []),
+                parse_status=document.get("parse_status", "parsed"),
+                parse_source=document.get("parse_source", "llm"),
+                enhancement_status=document.get("enhancement_status", "none"),
+                enhanced_suggestions=document.get("enhanced_suggestions", {}),
+                parse_error=document.get("parse_error"),
+                parsed_at=document.get("parsed_at"),
+                scan_image_id=document.get("scan_image_id"),
+                scan_image_front_id=document.get("scan_image_front_id"),
+                scan_image_back_id=document.get("scan_image_back_id"),
+                wallet_display=document.get("wallet_display"),
+                photo_face=document.get("photo_face"),
+            )
+            await self._collection.update_one(
+                {"_id": document["_id"]},
+                {
+                    "$set": {
+                        "core_fields": validated.core_fields.model_dump(mode="python"),
+                        "custom_fields": validated.custom_fields,
+                    }
+                },
+            )
+        except ValidationError as exc:
+            raise CardPersistenceError("Card document failed validation") from exc
+        except PyMongoError as exc:
+            logger.exception("Failed to update captured card %s", card_id)
+            raise CardPersistenceError("Failed to update captured card") from exc
+
+        updated = {
+            **document,
+            "core_fields": validated.core_fields.model_dump(mode="python"),
+            "custom_fields": validated.custom_fields,
+        }
         return self._to_response(updated)
 
     async def get_scan_image(

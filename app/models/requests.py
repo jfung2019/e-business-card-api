@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.card import PhotoFace, WalletDisplay
+from app.models.card import CoreFields, PhotoFace, WalletDisplay
 
 
 class ProcessCardRequest(BaseModel):
@@ -10,6 +10,13 @@ class ProcessCardRequest(BaseModel):
 class UpdateWalletDisplayRequest(BaseModel):
     wallet_display: WalletDisplay | None = None
     photo_face: PhotoFace | None = None
+
+
+class CapturedCardUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    core_fields: CoreFields | None = None
+    custom_fields: dict[str, str] | None = None
 
 
 class ApplyEnhancementRequest(BaseModel):

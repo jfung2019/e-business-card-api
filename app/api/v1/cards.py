@@ -18,7 +18,7 @@ from app.core.exceptions import (
 from app.db.mongodb import get_cards_collection_dependency, get_scan_image_service_dependency
 from app.api.v1.share_links import get_share_link_service
 from app.models.card import CapturedCardResponse, PhotoFace
-from app.models.requests import ApplyEnhancementRequest, UpdateWalletDisplayRequest
+from app.models.requests import ApplyEnhancementRequest, CapturedCardUpdate, UpdateWalletDisplayRequest
 from app.services.card_service import CardService
 from app.services.scan_image_service import ScanImageService
 from app.services.share_link_service import (
@@ -344,6 +344,25 @@ async def apply_card_enhancement(
             accepted_fields=payload.accepted_fields,
             accepted_overrides=payload.accepted_overrides,
         )
+    except CardNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.") from exc
+    except CardPersistenceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.put(
+    "/{card_id}",
+    response_model=CapturedCardResponse,
+    summary="Update a captured business card",
+)
+async def update_card(
+    card_id: str,
+    payload: CapturedCardUpdate,
+    owner_user_id: str = Depends(get_current_user_id),
+    card_service: CardService = Depends(get_card_service),
+) -> CapturedCardResponse:
+    try:
+        return await card_service.update(card_id, owner_user_id, payload)
     except CardNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.") from exc
     except CardPersistenceError as exc:
