@@ -8,6 +8,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        # Allow docker-compose-only vars (e.g. MONGO_ROOT_USERNAME) in the same .env
+        extra="ignore",
     )
 
     app_name: str = "E-Business Card API"
