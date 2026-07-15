@@ -10,6 +10,7 @@ from app.core.firebase import init_firebase
 from app.db.mongodb import close_motor_client, get_motor_client
 from app.web.privacy import router as privacy_router
 from app.web.routes import router as share_web_router
+from app.web.terms import router as terms_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1_router, prefix=settings.api_v1_prefix)
     app.include_router(share_web_router)
     app.include_router(privacy_router)
+    app.include_router(terms_router)
 
     return app
 

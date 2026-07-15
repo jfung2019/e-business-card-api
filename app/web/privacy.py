@@ -42,7 +42,8 @@ def privacy_policy_page() -> HTMLResponse:
   <p>This Privacy Policy explains how Megaannum Technology Limited (“we”, “us”, or “our”)
   collects, uses, stores, and shares information when you use the E-Business Card
   mobile application and related backend services (the “Service”).</p>
-  <p>By creating an account or using the Service, you agree to this Privacy Policy.</p>
+  <p>By creating an account or using the Service, you agree to this Privacy Policy
+  and our <a href="/terms">Terms of Service</a>.</p>
 
   <h2>2. Information we collect</h2>
   <p><strong>Account information.</strong> When you sign in, we collect your
@@ -122,7 +123,7 @@ def privacy_policy_page() -> HTMLResponse:
 
   <h2>9. Contact us</h2>
   <p>Megaannum Technology Limited<br />
-  Email: developer@megaannum.ai</p>
+  Email: <a href="mailto:developer@megaannum.ai">developer@megaannum.ai</a><</p>
 </body>
 </html>
 """
